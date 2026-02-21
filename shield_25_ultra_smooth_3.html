@@ -699,6 +699,14 @@
   function isBlackSvgPaint(value) {
     if (!value) return false;
     const normalized = value.trim().toLowerCase();
+    if (normalized === "rgb(0, 0, 0)" || normalized === "rgba(0, 0, 0, 1)") return true;
+    const rgbMatch = normalized.match(/^rgba?\(([^)]+)\)$/);
+    if (rgbMatch) {
+      const parts = rgbMatch[1].split(",").map((x) => x.trim());
+      if (parts.length >= 3 && parts[0] === "0" && parts[1] === "0" && parts[2] === "0") {
+        return parts.length < 4 || parts[3] === "1";
+      }
+    }
     return normalized === "#000" ||
       normalized === "#000000" ||
       normalized === "black" ||
@@ -718,21 +726,29 @@
     const fillValue = (attrFill ?? styleFill ?? "").toLowerCase();
     const strokeValue = (attrStroke ?? styleStroke ?? "").toLowerCase();
 
-    const paintFill = (!hasExplicitFill && !hasExplicitStroke) || (fillValue !== "none");
+    const preserveBlackFill = isBlackSvgPaint(fillValue);
     // Не перекрашиваем обводку у элементов, где одновременно есть fill и stroke:
     // так сохраняется исходный контраст между заливкой и контуром в исходном SVG.
     // Stroke перекрашиваем только у «линейных» элементов (без заливки).
     const preserveBlackStroke = isBlackSvgPaint(strokeValue);
+    const paintFill = ((!hasExplicitFill && !hasExplicitStroke) || (fillValue !== "none")) && !preserveBlackFill;
     const paintStroke = hasExplicitStroke && strokeValue !== "none" && !paintFill && !preserveBlackStroke;
 
-    ["fill", "stroke", "fill-opacity", "stroke-opacity"].forEach((k) => styleMap.delete(k));
+    if (paintFill || (!preserveBlackFill && hasExplicitFill)) {
+      styleMap.delete("fill");
+      styleMap.delete("fill-opacity");
+    }
+    if (paintStroke || (!preserveBlackStroke && hasExplicitStroke)) {
+      styleMap.delete("stroke");
+      styleMap.delete("stroke-opacity");
+    }
 
     if (paintFill) {
       node.setAttribute("fill", fill);
       node.setAttribute("fill-opacity", opacity);
       styleMap.set("fill", fill);
       styleMap.set("fill-opacity", String(opacity));
-    } else {
+    } else if (!preserveBlackFill) {
       node.setAttribute("fill", "none");
       node.removeAttribute("fill-opacity");
       styleMap.set("fill", "none");
