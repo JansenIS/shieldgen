@@ -696,33 +696,52 @@
     return map;
   }
 
-  function classifySvgPaint(value) {
-    if (!value) return "other";
+  function parseSvgColor(value) {
+    if (!value) return null;
     const normalized = value.trim().toLowerCase();
-    if (!normalized || normalized === "none" || normalized === "transparent") return "other";
+    if (!normalized || normalized === "none" || normalized === "transparent") return null;
 
-    const compact = normalized.replace(/\s+/g, "");
-    if (["#000", "#000000", "black", "rgb(0,0,0)", "rgba(0,0,0,1)", "rgb(0 0 0)", "rgb(0 0 0 / 1)"].includes(compact)) {
-      return "black";
-    }
-    if (["#fff", "#ffffff", "white", "rgb(255,255,255)", "rgba(255,255,255,1)", "rgb(255 255 255)", "rgb(255 255 255 / 1)"].includes(compact)) {
-      return "white";
+    if (normalized === "black") return { r: 0, g: 0, b: 0 };
+    if (normalized === "white") return { r: 255, g: 255, b: 255 };
+
+    const hex = normalized.match(/^#([0-9a-f]{3}|[0-9a-f]{6})$/i);
+    if (hex) {
+      const raw = hex[1];
+      if (raw.length === 3) {
+        return {
+          r: parseInt(raw[0] + raw[0], 16),
+          g: parseInt(raw[1] + raw[1], 16),
+          b: parseInt(raw[2] + raw[2], 16)
+        };
+      }
+      return {
+        r: parseInt(raw.slice(0, 2), 16),
+        g: parseInt(raw.slice(2, 4), 16),
+        b: parseInt(raw.slice(4, 6), 16)
+      };
     }
 
-    const rgbMatch = compact.match(/^rgba?\(([^)]+)\)$/);
-    if (rgbMatch) {
-      const parts = rgbMatch[1].split(",").map((x) => x.trim());
-      if (parts.length >= 3) {
-        const r = Number(parts[0]);
-        const g = Number(parts[1]);
-        const b = Number(parts[2]);
-        const a = parts.length >= 4 ? Number(parts[3]) : 1;
-        if (!Number.isNaN(r) && !Number.isNaN(g) && !Number.isNaN(b) && !Number.isNaN(a) && a > 0) {
-          if (r === 0 && g === 0 && b === 0) return "black";
-          if (r === 255 && g === 255 && b === 255) return "white";
-        }
+    const rgb = normalized.match(/^rgba?\(([^)]+)\)$/);
+    if (rgb) {
+      const parts = rgb[1].split(/[ ,/]+/).filter(Boolean).map(Number);
+      if (parts.length >= 3 && parts.slice(0, 3).every((v) => !Number.isNaN(v))) {
+        return { r: parts[0], g: parts[1], b: parts[2] };
       }
     }
+    return null;
+  }
+
+  function classifySvgPaint(value) {
+    const color = parseSvgColor(value);
+    if (!color) return "other";
+    const { r, g, b } = color;
+    const max = Math.max(r, g, b);
+    const min = Math.min(r, g, b);
+
+    // Чуть расширяем белый/черный до близких оттенков в внешних SVG,
+    // чтобы перекрашивать почти-белые заливки и не трогать почти-черные контуры.
+    if (max <= 32) return "black";
+    if (min >= 223) return "white";
     return "other";
   }
 
@@ -736,6 +755,18 @@
     return direct;
   }
 
+  function resolveSvgNumeric(node, styleMap, propName, inheritedValue) {
+    const attr = node.getAttribute(propName);
+    const styleValue = styleMap.get(propName);
+    const direct = attr ?? styleValue;
+    if (direct == null || direct === "") return inheritedValue;
+    const normalized = direct.trim().toLowerCase();
+    if (!normalized || normalized === "inherit") return inheritedValue;
+    const value = Number(normalized);
+    if (Number.isNaN(value)) return inheritedValue;
+    return clamp(value, 0, 1);
+  }
+
   function applyExternalSvgPaint(node, fill, opacity, inheritedPaint = {}) {
     const styleMap = parseInlineSvgStyle(node);
 
@@ -744,8 +775,13 @@
     const fillClass = classifySvgPaint(effectiveFill);
     const strokeClass = classifySvgPaint(effectiveStroke);
 
-    // Важно: разделяем белый/черный ДО перекраски, по эффективному (унаследованному) цвету.
-    if (fillClass === "white") {
+    const nodeOpacity = resolveSvgNumeric(node, styleMap, "opacity", inheritedPaint.opacity ?? 1);
+    const effectiveFillOpacity = resolveSvgNumeric(node, styleMap, "fill-opacity", inheritedPaint.fillOpacity ?? 1) * nodeOpacity;
+    const effectiveStrokeOpacity = resolveSvgNumeric(node, styleMap, "stroke-opacity", inheritedPaint.strokeOpacity ?? 1) * nodeOpacity;
+
+    // Разделяем белый/черный по эффективному цвету до перекраски.
+    // Дополнительно не трогаем полупрозрачные "шумы" в источнике.
+    if (fillClass === "white" && effectiveFillOpacity >= 0.75) {
       styleMap.delete("fill");
       styleMap.delete("fill-opacity");
       node.setAttribute("fill", fill);
@@ -754,7 +790,7 @@
       styleMap.set("fill-opacity", String(opacity));
     }
 
-    if (strokeClass === "white") {
+    if (strokeClass === "white" && effectiveStrokeOpacity >= 0.75) {
       styleMap.delete("stroke");
       styleMap.delete("stroke-opacity");
       node.setAttribute("stroke", fill);
@@ -769,7 +805,17 @@
 
     const inheritedAfterFill = resolveSvgPaint(node, styleMap, "fill", inheritedPaint.fill ?? null);
     const inheritedAfterStroke = resolveSvgPaint(node, styleMap, "stroke", inheritedPaint.stroke ?? null);
-    return { fill: inheritedAfterFill, stroke: inheritedAfterStroke };
+    const inheritedAfterOpacity = resolveSvgNumeric(node, styleMap, "opacity", inheritedPaint.opacity ?? 1);
+    const inheritedAfterFillOpacity = resolveSvgNumeric(node, styleMap, "fill-opacity", inheritedPaint.fillOpacity ?? 1);
+    const inheritedAfterStrokeOpacity = resolveSvgNumeric(node, styleMap, "stroke-opacity", inheritedPaint.strokeOpacity ?? 1);
+
+    return {
+      fill: inheritedAfterFill,
+      stroke: inheritedAfterStroke,
+      opacity: inheritedAfterOpacity,
+      fillOpacity: inheritedAfterFillOpacity,
+      strokeOpacity: inheritedAfterStrokeOpacity
+    };
   }
 
   function repaintExternalSvgTree(root, fill, opacity) {
@@ -787,7 +833,7 @@
       for (const child of node.children) walk(child, nextPaint);
     }
 
-    walk(root, { fill: null, stroke: null });
+    walk(root, { fill: null, stroke: null, opacity: 1, fillOpacity: 1, strokeOpacity: 1 });
   }
 
   function getShieldPathD() {
