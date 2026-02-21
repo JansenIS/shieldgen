@@ -696,22 +696,34 @@
     return map;
   }
 
-  function isBlackSvgPaint(value) {
-    if (!value) return false;
+  function classifySvgPaint(value) {
+    if (!value) return "other";
     const normalized = value.trim().toLowerCase();
-    if (normalized === "rgb(0, 0, 0)" || normalized === "rgba(0, 0, 0, 1)") return true;
-    const rgbMatch = normalized.match(/^rgba?\(([^)]+)\)$/);
+    if (!normalized || normalized === "none" || normalized === "transparent") return "other";
+
+    const compact = normalized.replace(/\s+/g, "");
+    if (["#000", "#000000", "black", "rgb(0,0,0)", "rgba(0,0,0,1)", "rgb(0 0 0)", "rgb(0 0 0 / 1)"].includes(compact)) {
+      return "black";
+    }
+    if (["#fff", "#ffffff", "white", "rgb(255,255,255)", "rgba(255,255,255,1)", "rgb(255 255 255)", "rgb(255 255 255 / 1)"].includes(compact)) {
+      return "white";
+    }
+
+    const rgbMatch = compact.match(/^rgba?\(([^)]+)\)$/);
     if (rgbMatch) {
       const parts = rgbMatch[1].split(",").map((x) => x.trim());
-      if (parts.length >= 3 && parts[0] === "0" && parts[1] === "0" && parts[2] === "0") {
-        return parts.length < 4 || parts[3] === "1";
+      if (parts.length >= 3) {
+        const r = Number(parts[0]);
+        const g = Number(parts[1]);
+        const b = Number(parts[2]);
+        const a = parts.length >= 4 ? Number(parts[3]) : 1;
+        if (!Number.isNaN(r) && !Number.isNaN(g) && !Number.isNaN(b) && !Number.isNaN(a) && a > 0) {
+          if (r === 0 && g === 0 && b === 0) return "black";
+          if (r === 255 && g === 255 && b === 255) return "white";
+        }
       }
     }
-    return normalized === "#000" ||
-      normalized === "#000000" ||
-      normalized === "black" ||
-      normalized === "rgb(0,0,0)" ||
-      normalized === "rgb(0 0 0)";
+    return "other";
   }
 
   function applyExternalSvgPaint(node, fill, opacity) {
@@ -721,36 +733,30 @@
     const styleFill = styleMap.get("fill");
     const styleStroke = styleMap.get("stroke");
 
-    const hasExplicitFill = (attrFill ?? styleFill) != null;
-    const hasExplicitStroke = (attrStroke ?? styleStroke) != null;
-    const fillValue = (attrFill ?? styleFill ?? "").toLowerCase();
-    const strokeValue = (attrStroke ?? styleStroke ?? "").toLowerCase();
+    const fillValue = attrFill ?? styleFill;
+    const strokeValue = attrStroke ?? styleStroke;
 
-    const preserveBlackFill = isBlackSvgPaint(fillValue);
-    // Обводку в импортированном SVG принципиально не перекрашиваем.
-    // Иначе в детализированных фигурах (гравировки, контуры, штриховка)
-    // теряется исходный рисунок и контраст.
-    const paintFill = ((!hasExplicitFill && !hasExplicitStroke) || (fillValue !== "none")) && !preserveBlackFill;
-    const keepOriginalStroke = hasExplicitStroke && strokeValue !== "none";
+    const fillClass = classifySvgPaint(fillValue);
+    const strokeClass = classifySvgPaint(strokeValue);
 
-    if (paintFill || (!preserveBlackFill && hasExplicitFill)) {
+    // Перекрашиваем ТОЛЬКО белые элементы (и заливку, и обводку).
+    // Черные элементы сохраняем как есть ещё на этапе классификации.
+    if (fillClass === "white") {
       styleMap.delete("fill");
       styleMap.delete("fill-opacity");
-    }
-    if (paintFill) {
       node.setAttribute("fill", fill);
       node.setAttribute("fill-opacity", opacity);
       styleMap.set("fill", fill);
       styleMap.set("fill-opacity", String(opacity));
-    } else if (!preserveBlackFill) {
-      node.setAttribute("fill", "none");
-      node.removeAttribute("fill-opacity");
-      styleMap.set("fill", "none");
     }
 
-    if (keepOriginalStroke) {
-      if (attrStroke != null) styleMap.delete("stroke");
-      if (node.getAttribute("stroke-opacity") != null) styleMap.delete("stroke-opacity");
+    if (strokeClass === "white") {
+      styleMap.delete("stroke");
+      styleMap.delete("stroke-opacity");
+      node.setAttribute("stroke", fill);
+      node.setAttribute("stroke-opacity", opacity);
+      styleMap.set("stroke", fill);
+      styleMap.set("stroke-opacity", String(opacity));
     }
 
     const nextStyle = [...styleMap.entries()].map(([k, v]) => `${k}:${v}`).join(";");
