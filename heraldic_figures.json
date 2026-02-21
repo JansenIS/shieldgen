@@ -1,6 +1,102 @@
 [
   {
     "group": "Гербовые",
+    "id": "heraldic_bike",
+    "name": "bike",
+    "kind": "external_svg",
+    "src": "./figures/bike.svg",
+    "defaults": {
+      "x": 0,
+      "y": 0.02,
+      "s": 0.52
+    }
+  },
+  {
+    "group": "Гербовые",
+    "id": "heraldic_griphon",
+    "name": "griphon",
+    "kind": "external_svg",
+    "src": "./figures/Coa_Illustration_Elements_Animal_Griffin_1.svg",
+    "defaults": {
+      "x": 0,
+      "y": 0.02,
+      "s": 0.52
+    }
+  },
+  {
+    "group": "Гербовые",
+    "id": "heraldic_scolopendra",
+    "name": "scolopendra",
+    "kind": "external_svg",
+    "src": "./figures/scolopendra.svg",
+    "defaults": {
+      "x": 0,
+      "y": 0.02,
+      "s": 0.52
+    }
+  },
+  {
+    "group": "Гербовые",
+    "id": "heraldic_locust",
+    "name": "locust",
+    "kind": "external_svg",
+    "src": "./figures/locust.svg",
+    "defaults": {
+      "x": 0,
+      "y": 0.02,
+      "s": 0.52
+    }
+  },
+  {
+    "group": "Гербовые",
+    "id": "heraldic_serpen",
+    "name": "serpen",
+    "kind": "external_svg",
+    "src": "./figures/Coa_Illustration_Elements_Animal_Serpent_Nowed.svg",
+    "defaults": {
+      "x": 0,
+      "y": 0.02,
+      "s": 0.52
+    }
+  },
+  {
+    "group": "Гербовые",
+    "id": "heraldic_varg",
+    "name": "varg",
+    "kind": "external_svg",
+    "src": "./figures/varg.svg",
+    "defaults": {
+      "x": 0,
+      "y": 0.02,
+      "s": 0.52
+    }
+  },
+  {
+    "group": "Гербовые",
+    "id": "heraldic_jeep",
+    "name": "jeep",
+    "kind": "external_svg",
+    "src": "./figures/jeep.svg",
+    "defaults": {
+      "x": 0,
+      "y": 0.02,
+      "s": 0.52
+    }
+  },
+  {
+    "group": "Гербовые",
+    "id": "heraldic_raindar",
+    "name": "Raindar",
+    "kind": "external_svg",
+    "src": "./figures/Raindar.svg",
+    "defaults": {
+      "x": 0,
+      "y": 0.02,
+      "s": 0.52
+    }
+  },
+  {
+    "group": "Гербовые",
     "id": "heraldic_bell_1",
     "name": "Bell-1",
     "kind": "external_svg",
@@ -1121,18 +1217,6 @@
     "name": "Phoenix (European Heraldry)",
     "kind": "external_svg",
     "src": "./figures/Phoenix_(European_Heraldry).svg",
-    "defaults": {
-      "x": 0,
-      "y": 0.02,
-      "s": 0.52
-    }
-  },
-  {
-    "group": "Гербовые",
-    "id": "heraldic_raindar",
-    "name": "Raindar",
-    "kind": "external_svg",
-    "src": "./figures/Raindar.svg",
     "defaults": {
       "x": 0,
       "y": 0.02,
