@@ -905,6 +905,34 @@
     return bbox;
   }
 
+  function parseSvgViewBox(svgEl) {
+    if (!svgEl) return null;
+    const raw = svgEl.getAttribute("viewBox");
+    if (!raw) return null;
+    const parts = raw.trim().split(/[ ,]+/).map(Number);
+    if (parts.length !== 4 || parts.some((n) => !Number.isFinite(n))) return null;
+    const [x, y, width, height] = parts;
+    if (!(width > 0 && height > 0)) return null;
+    return { x, y, width, height };
+  }
+
+  function pickExternalSvgBox(entry) {
+    const bbox = entry?.bbox;
+    const sourceViewBox = entry?.sourceViewBox;
+    if (!bbox || !(bbox.width > 0 && bbox.height > 0)) return sourceViewBox || null;
+    if (!sourceViewBox) return bbox;
+
+    const widthRatio = bbox.width / sourceViewBox.width;
+    const heightRatio = bbox.height / sourceViewBox.height;
+    const suspicious =
+      !Number.isFinite(widthRatio) ||
+      !Number.isFinite(heightRatio) ||
+      widthRatio > 8 || heightRatio > 8 ||
+      widthRatio < 0.125 || heightRatio < 0.125;
+
+    return suspicious ? sourceViewBox : bbox;
+  }
+
   function getShieldPathD() {
     const s = shieldShapes.find(x => x.id === state.shieldShape) || shieldShapes[0];
     return s.d;
@@ -1579,7 +1607,7 @@
 
       let entry = externalSvgCache.get(fig.src);
       if (!entry) {
-        entry = { status: "loading", svg: null, bbox: null };
+        entry = { status: "loading", svg: null, bbox: null, sourceViewBox: null };
         entry.promise = loadSVG(fig.src)
           .then((svgText) => {
             const doc = new DOMParser().parseFromString(svgText, "image/svg+xml");
@@ -1591,6 +1619,7 @@
             entry.status = "ready";
             entry.svg = svgEl;
             entry.bbox = measureExternalSvgBBox(svgEl);
+            entry.sourceViewBox = parseSvgViewBox(svgEl);
             render();
           })
           .catch((err) => {
@@ -1608,8 +1637,9 @@
         svg.setAttribute("height", h);
         svg.setAttribute("preserveAspectRatio", "xMidYMid meet");
         svg.setAttribute("overflow", "visible");
-        if (entry.bbox) {
-          svg.setAttribute("viewBox", `${entry.bbox.x} ${entry.bbox.y} ${entry.bbox.width} ${entry.bbox.height}`);
+        const fitBox = pickExternalSvgBox(entry);
+        if (fitBox) {
+          svg.setAttribute("viewBox", `${fitBox.x} ${fitBox.y} ${fitBox.width} ${fitBox.height}`);
         }
 
         repaintExternalSvgTree(svg, fill, opacity);
@@ -1662,7 +1692,7 @@
 
     const shieldFit = Math.min((shieldBox.width || VB_W) / VB_W, (shieldBox.height || VB_H) / VB_H);
     const entry = fig && fig.src ? externalSvgCache.get(fig.src) : null;
-    const bbox = entry?.bbox;
+    const bbox = pickExternalSvgBox(entry);
     if (!bbox || !(bbox.width > 0 && bbox.height > 0)) {
       return clamp(shieldFit * 0.9, 0.12, 1);
     }
@@ -2201,7 +2231,7 @@
       if (fig.kind === "external_svg") {
         let entry = externalSvgCache.get(fig.src);
         if (!entry) {
-          entry = { status: "loading", svg: null, bbox: null };
+          entry = { status: "loading", svg: null, bbox: null, sourceViewBox: null };
           entry.promise = loadSVG(fig.src)
             .then((svgText) => {
               const doc = new DOMParser().parseFromString(svgText, "image/svg+xml");
@@ -2209,9 +2239,11 @@
               if (!svgEl || svgEl.nodeName.toLowerCase() !== "svg") {
                 throw new Error(`Некорректный SVG: ${fig.src}`);
               }
+              inlineExternalSvgClassPaint(svgEl);
               entry.status = "ready";
               entry.svg = svgEl;
               entry.bbox = measureExternalSvgBBox(svgEl);
+              entry.sourceViewBox = parseSvgViewBox(svgEl);
               renderFigurePreview();
             })
             .catch((err) => {
@@ -2229,8 +2261,9 @@
           ext.setAttribute("height", VB_H * 0.84);
           ext.setAttribute("preserveAspectRatio", "xMidYMid meet");
           ext.setAttribute("overflow", "visible");
-          if (entry.bbox) {
-            ext.setAttribute("viewBox", `${entry.bbox.x} ${entry.bbox.y} ${entry.bbox.width} ${entry.bbox.height}`);
+          const fitBox = pickExternalSvgBox(entry);
+          if (fitBox) {
+            ext.setAttribute("viewBox", `${fitBox.x} ${fitBox.y} ${fitBox.width} ${fitBox.height}`);
           }
           repaintExternalSvgTree(ext, color, 1);
           const g = makeSVG("g", { "clip-path": `url(#${clipId})` });
