@@ -709,7 +709,10 @@
     const strokeValue = (attrStroke ?? styleStroke ?? "").toLowerCase();
 
     const paintFill = (!hasExplicitFill && !hasExplicitStroke) || (fillValue !== "none");
-    const paintStroke = hasExplicitStroke && strokeValue !== "none";
+    // Не перекрашиваем обводку у элементов, где одновременно есть fill и stroke:
+    // так сохраняется исходный контраст между заливкой и контуром в исходном SVG.
+    // Stroke перекрашиваем только у «линейных» элементов (без заливки).
+    const paintStroke = hasExplicitStroke && strokeValue !== "none" && !paintFill;
 
     ["fill", "stroke", "fill-opacity", "stroke-opacity"].forEach((k) => styleMap.delete(k));
 
