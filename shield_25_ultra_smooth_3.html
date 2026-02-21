@@ -1146,13 +1146,14 @@
   }
 
   // ====== Figure rendering ======
-  function figureToSVG(layer, clipId) {
+  function figureToSVG(layer, clipId = null) {
     const { fig } = layer;
-    const g = makeSVG("g", {
+    const attrs = {
       id: `layer_${layer.id}`,
-      "data-layer-id": layer.id,
-      "clip-path": `url(#${clipId})`
-    });
+      "data-layer-id": layer.id
+    };
+    if (clipId) attrs["clip-path"] = `url(#${clipId})`;
+    const g = makeSVG("g", attrs);
 
     const dx = (layer.x ?? 0) * (VB_W/2);
     const dy = (layer.y ?? 0) * (VB_H/2);
@@ -1538,6 +1539,29 @@
     return g;
   }
 
+  function getExternalFigureFitScale() {
+    const tempSvg = makeSVG("svg", { viewBox: `0 0 ${VB_W} ${VB_H}`, width: 1, height: 1 });
+    tempSvg.style.position = "absolute";
+    tempSvg.style.left = "-9999px";
+    tempSvg.style.top = "-9999px";
+    tempSvg.style.visibility = "hidden";
+
+    const path = makeSVG("path", { d: getShieldPathD() });
+    tempSvg.appendChild(path);
+    document.body.appendChild(tempSvg);
+
+    let bbox;
+    try {
+      bbox = path.getBBox();
+    } catch (_) {
+      bbox = { x: 0, y: 0, width: VB_W, height: VB_H };
+    }
+    tempSvg.remove();
+
+    const fit = Math.min((bbox.width || VB_W) / VB_W, (bbox.height || VB_H) / VB_H);
+    return clamp(fit * 0.9, 0.12, 1);
+  }
+
   // ====== Render SVG ======
   function render() {
     svgBox.innerHTML = "";
@@ -1559,9 +1583,11 @@
     svg.appendChild(bgSVGGroup());
     drawField(svg, defs, clipId);
 
+    const figuresViewport = makeSVG("g", { "clip-path": `url(#${clipId})` });
     for (const layer of state.layers) {
-      svg.appendChild(figureToSVG(layer, clipId));
+      figuresViewport.appendChild(figureToSVG(layer));
     }
+    svg.appendChild(figuresViewport);
 
     const strokeW = clamp(state.strokeWidth, 0, 30);
     if (strokeW > 0) {
@@ -2156,6 +2182,12 @@
         y: fig.defaults?.y ?? 0,
         ...JSON.parse(JSON.stringify(fig.defaults || {}))
       };
+
+      if (fig.kind === "external_svg") {
+        const fitScale = getExternalFigureFitScale();
+        const initialScale = layer.s ?? 0.52;
+        layer.s = Math.min(initialScale, fitScale);
+      }
 
       state.layers.push(layer);
       overlay.remove();
