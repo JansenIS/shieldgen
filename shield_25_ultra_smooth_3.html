@@ -836,6 +836,33 @@
     walk(root, { fill: null, stroke: null, opacity: 1, fillOpacity: 1, strokeOpacity: 1 });
   }
 
+  function measureExternalSvgBBox(svgEl) {
+    const tempSvg = makeSVG("svg", { viewBox: "0 0 1 1", width: 1, height: 1 });
+    tempSvg.style.position = "absolute";
+    tempSvg.style.left = "-9999px";
+    tempSvg.style.top = "-9999px";
+    tempSvg.style.visibility = "hidden";
+
+    const wrap = makeSVG("g");
+    const probe = svgEl.cloneNode(true);
+    probe.removeAttribute("x");
+    probe.removeAttribute("y");
+    wrap.appendChild(probe);
+    tempSvg.appendChild(wrap);
+    document.body.appendChild(tempSvg);
+
+    let bbox = null;
+    try {
+      const b = wrap.getBBox();
+      if (b && b.width > 0 && b.height > 0) {
+        bbox = { x: b.x, y: b.y, width: b.width, height: b.height };
+      }
+    } catch (_) {}
+
+    tempSvg.remove();
+    return bbox;
+  }
+
   function getShieldPathD() {
     const s = shieldShapes.find(x => x.id === state.shieldShape) || shieldShapes[0];
     return s.d;
@@ -1483,7 +1510,7 @@
 
       let entry = externalSvgCache.get(fig.src);
       if (!entry) {
-        entry = { status: "loading", svg: null };
+        entry = { status: "loading", svg: null, bbox: null };
         entry.promise = loadSVG(fig.src)
           .then((svgText) => {
             const doc = new DOMParser().parseFromString(svgText, "image/svg+xml");
@@ -1493,6 +1520,7 @@
             }
             entry.status = "ready";
             entry.svg = svgEl;
+            entry.bbox = measureExternalSvgBBox(svgEl);
             render();
           })
           .catch((err) => {
@@ -1510,6 +1538,9 @@
         svg.setAttribute("height", h);
         svg.setAttribute("preserveAspectRatio", "xMidYMid meet");
         svg.setAttribute("overflow", "visible");
+        if (entry.bbox) {
+          svg.setAttribute("viewBox", `${entry.bbox.x} ${entry.bbox.y} ${entry.bbox.width} ${entry.bbox.height}`);
+        }
 
         repaintExternalSvgTree(svg, fill, opacity);
 
@@ -1540,7 +1571,7 @@
     return g;
   }
 
-  function getExternalFigureFitScale() {
+  function getExternalFigureFitScale(fig) {
     const tempSvg = makeSVG("svg", { viewBox: `0 0 ${VB_W} ${VB_H}`, width: 1, height: 1 });
     tempSvg.style.position = "absolute";
     tempSvg.style.left = "-9999px";
@@ -1551,16 +1582,37 @@
     tempSvg.appendChild(path);
     document.body.appendChild(tempSvg);
 
-    let bbox;
+    let shieldBox;
     try {
-      bbox = path.getBBox();
+      shieldBox = path.getBBox();
     } catch (_) {
-      bbox = { x: 0, y: 0, width: VB_W, height: VB_H };
+      shieldBox = { x: 0, y: 0, width: VB_W, height: VB_H };
     }
     tempSvg.remove();
 
-    const fit = Math.min((bbox.width || VB_W) / VB_W, (bbox.height || VB_H) / VB_H);
-    return clamp(fit * 0.9, 0.12, 1);
+    const shieldFit = Math.min((shieldBox.width || VB_W) / VB_W, (shieldBox.height || VB_H) / VB_H);
+    const entry = fig && fig.src ? externalSvgCache.get(fig.src) : null;
+    const bbox = entry?.bbox;
+    if (!bbox || !(bbox.width > 0 && bbox.height > 0)) {
+      return clamp(shieldFit * 0.9, 0.12, 1);
+    }
+
+    const figureAspect = bbox.width / bbox.height;
+    const viewportAspect = VB_W / VB_H;
+    let maxS;
+    if (figureAspect >= viewportAspect) {
+      maxS = Math.min(
+        (shieldBox.width || VB_W) / VB_W,
+        ((shieldBox.height || VB_H) * figureAspect) / VB_W
+      );
+    } else {
+      maxS = Math.min(
+        (shieldBox.height || VB_H) / VB_H,
+        (shieldBox.width || VB_W) / (VB_H * figureAspect)
+      );
+    }
+
+    return clamp(maxS * 0.9, 0.12, 1);
   }
 
   // ====== Render SVG ======
@@ -2045,7 +2097,7 @@
       if (fig.kind === "external_svg") {
         let entry = externalSvgCache.get(fig.src);
         if (!entry) {
-          entry = { status: "loading", svg: null };
+          entry = { status: "loading", svg: null, bbox: null };
           entry.promise = loadSVG(fig.src)
             .then((svgText) => {
               const doc = new DOMParser().parseFromString(svgText, "image/svg+xml");
@@ -2055,6 +2107,7 @@
               }
               entry.status = "ready";
               entry.svg = svgEl;
+              entry.bbox = measureExternalSvgBBox(svgEl);
               renderFigurePreview();
             })
             .catch((err) => {
@@ -2072,6 +2125,9 @@
           ext.setAttribute("height", VB_H * 0.84);
           ext.setAttribute("preserveAspectRatio", "xMidYMid meet");
           ext.setAttribute("overflow", "visible");
+          if (entry.bbox) {
+            ext.setAttribute("viewBox", `${entry.bbox.x} ${entry.bbox.y} ${entry.bbox.width} ${entry.bbox.height}`);
+          }
           repaintExternalSvgTree(ext, color, 1);
           const g = makeSVG("g", { "clip-path": `url(#${clipId})` });
           g.appendChild(ext);
@@ -2186,7 +2242,7 @@
       };
 
       if (fig.kind === "external_svg") {
-        const fitScale = getExternalFigureFitScale();
+        const fitScale = getExternalFigureFitScale(fig);
         const initialScale = layer.s ?? 0.52;
         layer.s = Math.min(initialScale, fitScale);
       }
