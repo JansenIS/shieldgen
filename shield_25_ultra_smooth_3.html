@@ -696,6 +696,16 @@
     return map;
   }
 
+  function isBlackSvgPaint(value) {
+    if (!value) return false;
+    const normalized = value.trim().toLowerCase();
+    return normalized === "#000" ||
+      normalized === "#000000" ||
+      normalized === "black" ||
+      normalized === "rgb(0,0,0)" ||
+      normalized === "rgb(0 0 0)";
+  }
+
   function applyExternalSvgPaint(node, fill, opacity) {
     const styleMap = parseInlineSvgStyle(node);
     const attrFill = node.getAttribute("fill");
@@ -712,7 +722,8 @@
     // Не перекрашиваем обводку у элементов, где одновременно есть fill и stroke:
     // так сохраняется исходный контраст между заливкой и контуром в исходном SVG.
     // Stroke перекрашиваем только у «линейных» элементов (без заливки).
-    const paintStroke = hasExplicitStroke && strokeValue !== "none" && !paintFill;
+    const preserveBlackStroke = isBlackSvgPaint(strokeValue);
+    const paintStroke = hasExplicitStroke && strokeValue !== "none" && !paintFill && !preserveBlackStroke;
 
     ["fill", "stroke", "fill-opacity", "stroke-opacity"].forEach((k) => styleMap.delete(k));
 
