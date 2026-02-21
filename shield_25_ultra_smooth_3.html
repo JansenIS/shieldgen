@@ -424,6 +424,8 @@
       <div class="btnrow" style="margin-top:10px">
         <button class="primary" id="addFigure">Добавить фигуру</button>
         <button class="ghost" id="uploadFigure">Загрузить SVG</button>
+        <button class="ghost" id="addServerSvg">Добавить SVG по имени</button>
+        <button class="ghost" id="refreshCatalog">Обновить SVG-каталог</button>
         <input type="file" id="uploadFigureInput" accept=".svg,image/svg+xml" style="display:none" />
         <button class="ghost" id="reset">Сброс</button>
       </div>
@@ -591,27 +593,35 @@
       .trim();
   }
 
-  const discoveredFigurePaths = await discoverFigureFilesFromDirectory();
   const normalizePath = (path) => {
     const normalized = String(path || "").trim().toLowerCase();
     return normalized.startsWith("./") ? normalized : `./${normalized.replace(/^\/+/, "")}`;
   };
-  const knownFigurePaths = new Set(
-    [...figureCatalog, ...heraldicFigureCatalog]
-      .filter((f) => f.kind === "external_svg" && f.src)
-      .map((f) => normalizePath(f.src))
-  );
 
-  const autoDetectedFigures = discoveredFigurePaths
-    .filter((src) => !knownFigurePaths.has(normalizePath(src)))
-    .map((src, idx) => ({
-      group: "Гербовые",
-      id: `auto_${idx}_${src.split("/").pop().replace(/[^a-z0-9]+/gi, "_").toLowerCase()}`,
-      name: fileNameToTitle(src),
-      kind: "external_svg",
-      src,
-      defaults: { s: 0.52, x: 0, y: 0 }
-    }));
+  const uploadedFigureCatalog = [];
+  let autoDetectedFigures = [];
+
+  async function refreshAutoDetectedFigures() {
+    const discoveredFigurePaths = await discoverFigureFilesFromDirectory();
+    const knownFigurePaths = new Set(
+      [...figureCatalog, ...heraldicFigureCatalog, ...uploadedFigureCatalog]
+        .filter((f) => f.kind === "external_svg" && f.src)
+        .map((f) => normalizePath(f.src))
+    );
+
+    autoDetectedFigures = discoveredFigurePaths
+      .filter((src) => !knownFigurePaths.has(normalizePath(src)))
+      .map((src, idx) => ({
+        group: "Гербовые",
+        id: `auto_${idx}_${src.split("/").pop().replace(/[^a-z0-9]+/gi, "_").toLowerCase()}`,
+        name: fileNameToTitle(src),
+        kind: "external_svg",
+        src,
+        defaults: { s: 0.52, x: 0, y: 0 }
+      }));
+  }
+
+  await refreshAutoDetectedFigures();
 
   const heraldicPalette = [
     "#FFBB06", "#FFF500", "#F4C551", "#FFFFFF", "#B4BEBF",
@@ -653,6 +663,8 @@
 
   const addFigureBtn = el("addFigure");
   const uploadFigureBtn = el("uploadFigure");
+  const addServerSvgBtn = el("addServerSvg");
+  const refreshCatalogBtn = el("refreshCatalog");
   const uploadFigureInput = el("uploadFigureInput");
 
   const externalSvgCache = new Map();
@@ -662,7 +674,6 @@
   const downloadSVGBtn = el("downloadSVG");
   const downloadPNGBtn = el("downloadPNG");
 
-  const uploadedFigureCatalog = [];
   function getFullFigureCatalog() {
     return [...figureCatalog, ...heraldicFigureCatalog, ...autoDetectedFigures, ...uploadedFigureCatalog];
   }
@@ -2710,6 +2721,31 @@
       });
       uploadFigureInput.value = "";
       addFigureFlow();
+    };
+
+    addServerSvgBtn.onclick = async () => {
+      const raw = prompt("Введите имя файла в папке figures (например: New_Figure.svg)");
+      if (!raw) return;
+      const filename = raw.trim().split("/").pop();
+      if (!filename || !/\.svg$/i.test(filename)) {
+        alert("Нужно указать имя SVG-файла, например: MyFigure.svg");
+        return;
+      }
+      const src = `./figures/${filename}`;
+      try {
+        const check = await fetch(`${src}?_=${Date.now()}`, { cache: "no-store" });
+        if (!check.ok) throw new Error(String(check.status));
+        await refreshAutoDetectedFigures();
+        addFigureFlow();
+      } catch (err) {
+        alert(`Не удалось загрузить ${filename} с сервера.`);
+      }
+    };
+
+    refreshCatalogBtn.onclick = async () => {
+      await refreshAutoDetectedFigures();
+      render();
+      alert(`SVG-каталог обновлён. Найдено новых серверных SVG: ${autoDetectedFigures.length}.`);
     };
 
     resetBtn.onclick = () => {
