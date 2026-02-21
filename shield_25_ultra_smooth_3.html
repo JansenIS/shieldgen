@@ -696,66 +696,171 @@
     return map;
   }
 
-  function isBlackSvgPaint(value) {
-    if (!value) return false;
+  function parseSvgColor(value) {
+    if (!value) return null;
     const normalized = value.trim().toLowerCase();
-    if (normalized === "rgb(0, 0, 0)" || normalized === "rgba(0, 0, 0, 1)") return true;
-    const rgbMatch = normalized.match(/^rgba?\(([^)]+)\)$/);
-    if (rgbMatch) {
-      const parts = rgbMatch[1].split(",").map((x) => x.trim());
-      if (parts.length >= 3 && parts[0] === "0" && parts[1] === "0" && parts[2] === "0") {
-        return parts.length < 4 || parts[3] === "1";
+    if (!normalized || normalized === "none" || normalized === "transparent") return null;
+
+    if (normalized === "black") return { r: 0, g: 0, b: 0 };
+    if (normalized === "white") return { r: 255, g: 255, b: 255 };
+
+    const hex = normalized.match(/^#([0-9a-f]{3}|[0-9a-f]{6})$/i);
+    if (hex) {
+      const raw = hex[1];
+      if (raw.length === 3) {
+        return {
+          r: parseInt(raw[0] + raw[0], 16),
+          g: parseInt(raw[1] + raw[1], 16),
+          b: parseInt(raw[2] + raw[2], 16)
+        };
+      }
+      return {
+        r: parseInt(raw.slice(0, 2), 16),
+        g: parseInt(raw.slice(2, 4), 16),
+        b: parseInt(raw.slice(4, 6), 16)
+      };
+    }
+
+    const rgb = normalized.match(/^rgba?\(([^)]+)\)$/);
+    if (rgb) {
+      const parts = rgb[1].split(/[ ,/]+/).filter(Boolean).map(Number);
+      if (parts.length >= 3 && parts.slice(0, 3).every((v) => !Number.isNaN(v))) {
+        return { r: parts[0], g: parts[1], b: parts[2] };
       }
     }
-    return normalized === "#000" ||
-      normalized === "#000000" ||
-      normalized === "black" ||
-      normalized === "rgb(0,0,0)" ||
-      normalized === "rgb(0 0 0)";
+    return null;
   }
 
-  function applyExternalSvgPaint(node, fill, opacity) {
+  function classifySvgPaint(value) {
+    const color = parseSvgColor(value);
+    if (!color) return "other";
+    const { r, g, b } = color;
+    const max = Math.max(r, g, b);
+    const min = Math.min(r, g, b);
+
+    // Чуть расширяем белый/черный до близких оттенков в внешних SVG,
+    // чтобы перекрашивать почти-белые заливки и не трогать почти-черные контуры.
+    if (max <= 32) return "black";
+    if (min >= 223) return "white";
+    return "other";
+  }
+
+  function resolveSvgPaint(node, styleMap, propName, inheritedValue) {
+    const attr = node.getAttribute(propName);
+    const styleValue = styleMap.get(propName);
+    const direct = attr ?? styleValue;
+    if (direct == null || direct === "") return inheritedValue;
+    const normalized = direct.trim().toLowerCase();
+    if (!normalized || normalized === "inherit") return inheritedValue;
+    return direct;
+  }
+
+  function resolveSvgNumeric(node, styleMap, propName, inheritedValue) {
+    const attr = node.getAttribute(propName);
+    const styleValue = styleMap.get(propName);
+    const direct = attr ?? styleValue;
+    if (direct == null || direct === "") return inheritedValue;
+    const normalized = direct.trim().toLowerCase();
+    if (!normalized || normalized === "inherit") return inheritedValue;
+    const value = Number(normalized);
+    if (Number.isNaN(value)) return inheritedValue;
+    return clamp(value, 0, 1);
+  }
+
+  function applyExternalSvgPaint(node, fill, opacity, inheritedPaint = {}) {
     const styleMap = parseInlineSvgStyle(node);
-    const attrFill = node.getAttribute("fill");
-    const attrStroke = node.getAttribute("stroke");
-    const styleFill = styleMap.get("fill");
-    const styleStroke = styleMap.get("stroke");
 
-    const hasExplicitFill = (attrFill ?? styleFill) != null;
-    const hasExplicitStroke = (attrStroke ?? styleStroke) != null;
-    const fillValue = (attrFill ?? styleFill ?? "").toLowerCase();
-    const strokeValue = (attrStroke ?? styleStroke ?? "").toLowerCase();
+    const effectiveFill = resolveSvgPaint(node, styleMap, "fill", inheritedPaint.fill ?? null);
+    const effectiveStroke = resolveSvgPaint(node, styleMap, "stroke", inheritedPaint.stroke ?? null);
+    const fillClass = classifySvgPaint(effectiveFill);
+    const strokeClass = classifySvgPaint(effectiveStroke);
 
-    const preserveBlackFill = isBlackSvgPaint(fillValue);
-    // Обводку в импортированном SVG принципиально не перекрашиваем.
-    // Иначе в детализированных фигурах (гравировки, контуры, штриховка)
-    // теряется исходный рисунок и контраст.
-    const paintFill = ((!hasExplicitFill && !hasExplicitStroke) || (fillValue !== "none")) && !preserveBlackFill;
-    const keepOriginalStroke = hasExplicitStroke && strokeValue !== "none";
+    const nodeOpacity = resolveSvgNumeric(node, styleMap, "opacity", inheritedPaint.opacity ?? 1);
+    const effectiveFillOpacity = resolveSvgNumeric(node, styleMap, "fill-opacity", inheritedPaint.fillOpacity ?? 1) * nodeOpacity;
+    const effectiveStrokeOpacity = resolveSvgNumeric(node, styleMap, "stroke-opacity", inheritedPaint.strokeOpacity ?? 1) * nodeOpacity;
 
-    if (paintFill || (!preserveBlackFill && hasExplicitFill)) {
+    // Разделяем белый/черный по эффективному цвету до перекраски.
+    // Дополнительно не трогаем полупрозрачные "шумы" в источнике.
+    if (fillClass === "white" && effectiveFillOpacity >= 0.75) {
       styleMap.delete("fill");
       styleMap.delete("fill-opacity");
-    }
-    if (paintFill) {
       node.setAttribute("fill", fill);
       node.setAttribute("fill-opacity", opacity);
       styleMap.set("fill", fill);
       styleMap.set("fill-opacity", String(opacity));
-    } else if (!preserveBlackFill) {
-      node.setAttribute("fill", "none");
-      node.removeAttribute("fill-opacity");
-      styleMap.set("fill", "none");
     }
 
-    if (keepOriginalStroke) {
-      if (attrStroke != null) styleMap.delete("stroke");
-      if (node.getAttribute("stroke-opacity") != null) styleMap.delete("stroke-opacity");
+    if (strokeClass === "white" && effectiveStrokeOpacity >= 0.75) {
+      styleMap.delete("stroke");
+      styleMap.delete("stroke-opacity");
+      node.setAttribute("stroke", fill);
+      node.setAttribute("stroke-opacity", opacity);
+      styleMap.set("stroke", fill);
+      styleMap.set("stroke-opacity", String(opacity));
     }
 
     const nextStyle = [...styleMap.entries()].map(([k, v]) => `${k}:${v}`).join(";");
     if (nextStyle) node.setAttribute("style", nextStyle);
     else node.removeAttribute("style");
+
+    const inheritedAfterFill = resolveSvgPaint(node, styleMap, "fill", inheritedPaint.fill ?? null);
+    const inheritedAfterStroke = resolveSvgPaint(node, styleMap, "stroke", inheritedPaint.stroke ?? null);
+    const inheritedAfterOpacity = resolveSvgNumeric(node, styleMap, "opacity", inheritedPaint.opacity ?? 1);
+    const inheritedAfterFillOpacity = resolveSvgNumeric(node, styleMap, "fill-opacity", inheritedPaint.fillOpacity ?? 1);
+    const inheritedAfterStrokeOpacity = resolveSvgNumeric(node, styleMap, "stroke-opacity", inheritedPaint.strokeOpacity ?? 1);
+
+    return {
+      fill: inheritedAfterFill,
+      stroke: inheritedAfterStroke,
+      opacity: inheritedAfterOpacity,
+      fillOpacity: inheritedAfterFillOpacity,
+      strokeOpacity: inheritedAfterStrokeOpacity
+    };
+  }
+
+  function repaintExternalSvgTree(root, fill, opacity) {
+    const paintableTags = new Set(["path", "rect", "circle", "ellipse", "polygon", "polyline", "line", "text"]);
+
+    function walk(node, inheritedPaint) {
+      if (!node || node.nodeType !== Node.ELEMENT_NODE) return;
+      const tag = node.nodeName.toLowerCase();
+      let nextPaint = inheritedPaint;
+
+      if (tag === "g" || tag === "svg" || paintableTags.has(tag)) {
+        nextPaint = applyExternalSvgPaint(node, fill, opacity, inheritedPaint);
+      }
+
+      for (const child of node.children) walk(child, nextPaint);
+    }
+
+    walk(root, { fill: null, stroke: null, opacity: 1, fillOpacity: 1, strokeOpacity: 1 });
+  }
+
+  function measureExternalSvgBBox(svgEl) {
+    const tempSvg = makeSVG("svg", { viewBox: "0 0 1 1", width: 1, height: 1 });
+    tempSvg.style.position = "absolute";
+    tempSvg.style.left = "-9999px";
+    tempSvg.style.top = "-9999px";
+    tempSvg.style.visibility = "hidden";
+
+    const wrap = makeSVG("g");
+    const probe = svgEl.cloneNode(true);
+    probe.removeAttribute("x");
+    probe.removeAttribute("y");
+    wrap.appendChild(probe);
+    tempSvg.appendChild(wrap);
+    document.body.appendChild(tempSvg);
+
+    let bbox = null;
+    try {
+      const b = wrap.getBBox();
+      if (b && b.width > 0 && b.height > 0) {
+        bbox = { x: b.x, y: b.y, width: b.width, height: b.height };
+      }
+    } catch (_) {}
+
+    tempSvg.remove();
+    return bbox;
   }
 
   function getShieldPathD() {
@@ -994,14 +1099,43 @@
     return !non.has(layer.fig.kind);
   }
 
+  const centerPresets = [
+    { id: "center", name: "По центру щита", scale: 1, x: 0, y: 0 },
+    { id: "quarter_ru", name: "Правая верхняя четверть", scale: 0.25, x: 0.5, y: -0.5 },
+    { id: "quarter_lu", name: "Левая верхняя четверть", scale: 0.25, x: -0.5, y: -0.5 },
+    { id: "quarter_rd", name: "Правая нижняя четверть", scale: 0.25, x: 0.5, y: 0.5 },
+    { id: "quarter_ld", name: "Левая нижняя четверть", scale: 0.25, x: -0.5, y: 0.5 },
+    { id: "half_r", name: "Правая половина", scale: 0.5, x: 0.5, y: 0 },
+    { id: "half_l", name: "Левая половина", scale: 0.5, x: -0.5, y: 0 },
+    { id: "half_u", name: "Верхняя половина", scale: 0.5, x: 0, y: -0.5 },
+    { id: "half_d", name: "Нижняя половина", scale: 0.5, x: 0, y: 0.5 }
+  ];
+
+  function canCenterPreset(fig) {
+    if (!fig) return false;
+    return fig.group === "Простые" || fig.group === "Гербовые";
+  }
+
+  function applyCenterPresetToLayer(layer, presetId) {
+    const preset = centerPresets.find((p) => p.id === presetId) || centerPresets[0];
+    layer.x = clamp(preset.x, -0.65, 0.65);
+    layer.y = clamp(preset.y, -0.65, 0.65);
+    layer.fitScale = preset.scale;
+  }
+
+  function getLayerTransform(layer) {
+    const dx = (layer.x ?? 0) * (VB_W/2);
+    const dy = (layer.y ?? 0) * (VB_H/2);
+    const k = clamp(layer.fitScale ?? 1, 0.05, 2);
+    return `translate(${dx} ${dy}) translate(${VB_W/2} ${VB_H/2}) scale(${k}) translate(${-VB_W/2} ${-VB_H/2})`;
+  }
+
   function applyLayerTransform(layerId, svgEl) {
     const layer = state.layers.find(l => l.id === layerId);
     if (!layer) return;
     const g = svgEl.querySelector(`#layer_${CSS.escape(layerId)}`);
     if (!g) return;
-    const dx = (layer.x ?? 0) * (VB_W/2);
-    const dy = (layer.y ?? 0) * (VB_H/2);
-    g.setAttribute("transform", `translate(${dx} ${dy})`);
+    g.setAttribute("transform", getLayerTransform(layer));
   }
 
   function startDrag(evt, layerId) {
@@ -1068,17 +1202,16 @@
   }
 
   // ====== Figure rendering ======
-  function figureToSVG(layer, clipId) {
+  function figureToSVG(layer, clipId = null) {
     const { fig } = layer;
-    const g = makeSVG("g", {
+    const attrs = {
       id: `layer_${layer.id}`,
-      "data-layer-id": layer.id,
-      "clip-path": `url(#${clipId})`
-    });
+      "data-layer-id": layer.id
+    };
+    if (clipId) attrs["clip-path"] = `url(#${clipId})`;
+    const g = makeSVG("g", attrs);
 
-    const dx = (layer.x ?? 0) * (VB_W/2);
-    const dy = (layer.y ?? 0) * (VB_H/2);
-    g.setAttribute("transform", `translate(${dx} ${dy})`);
+    g.setAttribute("transform", getLayerTransform(layer));
 
     const fill = layer.color || "#FF7F00";
     const opacity = clamp(layer.opacity ?? 1, 0, 1);
@@ -1404,7 +1537,7 @@
 
       let entry = externalSvgCache.get(fig.src);
       if (!entry) {
-        entry = { status: "loading", svg: null };
+        entry = { status: "loading", svg: null, bbox: null };
         entry.promise = loadSVG(fig.src)
           .then((svgText) => {
             const doc = new DOMParser().parseFromString(svgText, "image/svg+xml");
@@ -1414,6 +1547,7 @@
             }
             entry.status = "ready";
             entry.svg = svgEl;
+            entry.bbox = measureExternalSvgBBox(svgEl);
             render();
           })
           .catch((err) => {
@@ -1430,16 +1564,12 @@
         svg.setAttribute("width", w);
         svg.setAttribute("height", h);
         svg.setAttribute("preserveAspectRatio", "xMidYMid meet");
-
-        const paintableTags = new Set(["path", "rect", "circle", "ellipse", "polygon", "polyline"]);
-        const walker = document.createTreeWalker(svg, NodeFilter.SHOW_ELEMENT);
-        while (walker.nextNode()) {
-          const node = walker.currentNode;
-          const tag = node.nodeName.toLowerCase();
-          if (paintableTags.has(tag)) {
-            applyExternalSvgPaint(node, fill, opacity);
-          }
+        svg.setAttribute("overflow", "visible");
+        if (entry.bbox) {
+          svg.setAttribute("viewBox", `${entry.bbox.x} ${entry.bbox.y} ${entry.bbox.width} ${entry.bbox.height}`);
         }
+
+        repaintExternalSvgTree(svg, fill, opacity);
 
         g.appendChild(svg);
       } else {
@@ -1468,6 +1598,50 @@
     return g;
   }
 
+  function getExternalFigureFitScale(fig) {
+    const tempSvg = makeSVG("svg", { viewBox: `0 0 ${VB_W} ${VB_H}`, width: 1, height: 1 });
+    tempSvg.style.position = "absolute";
+    tempSvg.style.left = "-9999px";
+    tempSvg.style.top = "-9999px";
+    tempSvg.style.visibility = "hidden";
+
+    const path = makeSVG("path", { d: getShieldPathD() });
+    tempSvg.appendChild(path);
+    document.body.appendChild(tempSvg);
+
+    let shieldBox;
+    try {
+      shieldBox = path.getBBox();
+    } catch (_) {
+      shieldBox = { x: 0, y: 0, width: VB_W, height: VB_H };
+    }
+    tempSvg.remove();
+
+    const shieldFit = Math.min((shieldBox.width || VB_W) / VB_W, (shieldBox.height || VB_H) / VB_H);
+    const entry = fig && fig.src ? externalSvgCache.get(fig.src) : null;
+    const bbox = entry?.bbox;
+    if (!bbox || !(bbox.width > 0 && bbox.height > 0)) {
+      return clamp(shieldFit * 0.9, 0.12, 1);
+    }
+
+    const figureAspect = bbox.width / bbox.height;
+    const viewportAspect = VB_W / VB_H;
+    let maxS;
+    if (figureAspect >= viewportAspect) {
+      maxS = Math.min(
+        (shieldBox.width || VB_W) / VB_W,
+        ((shieldBox.height || VB_H) * figureAspect) / VB_W
+      );
+    } else {
+      maxS = Math.min(
+        (shieldBox.height || VB_H) / VB_H,
+        (shieldBox.width || VB_W) / (VB_H * figureAspect)
+      );
+    }
+
+    return clamp(maxS * 0.9, 0.12, 1);
+  }
+
   // ====== Render SVG ======
   function render() {
     svgBox.innerHTML = "";
@@ -1489,9 +1663,11 @@
     svg.appendChild(bgSVGGroup());
     drawField(svg, defs, clipId);
 
+    const figuresViewport = makeSVG("g", { "clip-path": `url(#${clipId})` });
     for (const layer of state.layers) {
-      svg.appendChild(figureToSVG(layer, clipId));
+      figuresViewport.appendChild(figureToSVG(layer));
     }
+    svg.appendChild(figuresViewport);
 
     const strokeW = clamp(state.strokeWidth, 0, 30);
     if (strokeW > 0) {
@@ -1639,6 +1815,40 @@
       body.appendChild(oWrap);
       body.appendChild(xWrap);
       body.appendChild(yWrap);
+
+      if (canCenterPreset(layer.fig)) {
+        const centerWrap = document.createElement("div");
+        centerWrap.className = "full";
+        centerWrap.innerHTML = `<label>Отцентровать</label>`;
+
+        const row = document.createElement("div");
+        row.style.display = "flex";
+        row.style.gap = "8px";
+        row.style.alignItems = "center";
+
+        const sel = document.createElement("select");
+        sel.style.flex = "1";
+        centerPresets.forEach((preset) => {
+          const o = document.createElement("option");
+          o.value = preset.id;
+          o.textContent = preset.name;
+          sel.appendChild(o);
+        });
+
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "ghost";
+        btn.textContent = "Отцентровать";
+        btn.onclick = () => {
+          applyCenterPresetToLayer(layer, sel.value);
+          render();
+        };
+
+        row.appendChild(sel);
+        row.appendChild(btn);
+        centerWrap.appendChild(row);
+        body.appendChild(centerWrap);
+      }
 
       const params = buildParamControls(layer);
       params.forEach(node => body.appendChild(node));
@@ -1916,6 +2126,87 @@
     const previewGrid = document.createElement("div");
     previewGrid.className = "figurePreviewGrid";
 
+    function renderFigureIcon(icon, fig, color) {
+      icon.innerHTML = "";
+      const sw = 86;
+      const sh = 96;
+      const clipId = `clip_preview_${Math.random().toString(36).slice(2, 10)}`;
+      const layer = {
+        id: `preview_${fig.id}`,
+        fig,
+        color,
+        opacity: 1,
+        x: 0,
+        y: 0,
+        ...(fig.defaults ? JSON.parse(JSON.stringify(fig.defaults)) : {})
+      };
+
+      const svg = makeSVG("svg", {
+        xmlns: "http://www.w3.org/2000/svg",
+        viewBox: `0 0 ${VB_W} ${VB_H}`,
+        width: sw,
+        height: sh,
+        preserveAspectRatio: "xMidYMid meet"
+      });
+
+      const defs = makeSVG("defs");
+      const cp = makeSVG("clipPath", { id: clipId });
+      cp.appendChild(makeSVG("path", { d: getShieldPathD() }));
+      defs.appendChild(cp);
+      svg.appendChild(defs);
+
+      if (fig.kind === "external_svg") {
+        let entry = externalSvgCache.get(fig.src);
+        if (!entry) {
+          entry = { status: "loading", svg: null, bbox: null };
+          entry.promise = loadSVG(fig.src)
+            .then((svgText) => {
+              const doc = new DOMParser().parseFromString(svgText, "image/svg+xml");
+              const svgEl = doc.documentElement;
+              if (!svgEl || svgEl.nodeName.toLowerCase() !== "svg") {
+                throw new Error(`Некорректный SVG: ${fig.src}`);
+              }
+              entry.status = "ready";
+              entry.svg = svgEl;
+              entry.bbox = measureExternalSvgBBox(svgEl);
+              renderFigurePreview();
+            })
+            .catch((err) => {
+              console.error(err);
+              entry.status = "error";
+            });
+          externalSvgCache.set(fig.src, entry);
+        }
+
+        if (entry.status === "ready" && entry.svg) {
+          const ext = entry.svg.cloneNode(true);
+          ext.setAttribute("x", VB_W * 0.08);
+          ext.setAttribute("y", VB_H * 0.08);
+          ext.setAttribute("width", VB_W * 0.84);
+          ext.setAttribute("height", VB_H * 0.84);
+          ext.setAttribute("preserveAspectRatio", "xMidYMid meet");
+          ext.setAttribute("overflow", "visible");
+          if (entry.bbox) {
+            ext.setAttribute("viewBox", `${entry.bbox.x} ${entry.bbox.y} ${entry.bbox.width} ${entry.bbox.height}`);
+          }
+          repaintExternalSvgTree(ext, color, 1);
+          const g = makeSVG("g", { "clip-path": `url(#${clipId})` });
+          g.appendChild(ext);
+          svg.appendChild(g);
+        } else {
+          const img = document.createElement("img");
+          img.src = fig.src;
+          img.alt = fig.name;
+          icon.appendChild(img);
+          return;
+        }
+      } else {
+        svg.appendChild(figureToSVG(layer, clipId));
+      }
+
+      icon.appendChild(svg);
+    }
+
     function renderFigurePreview() {
       const selectedId = figSel.value;
       previewGrid.innerHTML = "";
@@ -1931,14 +2222,7 @@
 
         const icon = document.createElement("div");
         icon.className = "figurePreviewIcon";
-        if (f.kind === "external_svg") {
-          const img = document.createElement("img");
-          img.src = f.src;
-          img.alt = f.name;
-          icon.appendChild(img);
-        } else {
-          icon.textContent = "SVG";
-        }
+        renderFigureIcon(icon, f, normalizePaletteColor(selectedColor));
 
         const name = document.createElement("div");
         name.textContent = f.name;
@@ -1970,7 +2254,31 @@
     }
 
     let selectedColor = "#FF7F00";
-    const colorSel = createPalettePicker(selectedColor, (value) => { selectedColor = value; }, { allowedColors: getRestrictionSet() });
+    let selectedPresetId = "center";
+    const colorSel = createPalettePicker(selectedColor, (value) => { selectedColor = value; renderFigurePreview(); }, { allowedColors: getRestrictionSet() });
+
+    const centerWrap = document.createElement("div");
+    centerWrap.style.marginTop = "10px";
+    centerWrap.innerHTML = `<label>Отцентровать</label>`;
+
+    const centerSel = document.createElement("select");
+    centerSel.style.width = "100%";
+    centerPresets.forEach((preset) => {
+      const o = document.createElement("option");
+      o.value = preset.id;
+      o.textContent = preset.name;
+      centerSel.appendChild(o);
+    });
+    centerSel.value = selectedPresetId;
+    centerSel.onchange = () => { selectedPresetId = centerSel.value; };
+    centerWrap.appendChild(centerSel);
+
+    function refreshCenterPresetUI() {
+      const fig = fullFigureCatalog.find((f) => f.id === figSel.value);
+      const allowed = canCenterPreset(fig);
+      centerWrap.style.display = allowed ? "block" : "none";
+      centerSel.disabled = !allowed;
+    }
 
     const note = document.createElement("div");
     note.className = "smallnote";
@@ -1981,11 +2289,13 @@
     left.appendChild(figSel);
     left.appendChild(previewGrid);
 
-    figSel.addEventListener("change", renderFigurePreview);
+    figSel.addEventListener("change", () => { renderFigurePreview(); refreshCenterPresetUI(); });
     renderFigurePreview();
+    refreshCenterPresetUI();
 
     right.innerHTML = `<label>Цвет фигуры</label>`;
     right.appendChild(colorSel);
+    right.appendChild(centerWrap);
 
     wrap.appendChild(left);
     wrap.appendChild(right);
@@ -2017,6 +2327,16 @@
         y: fig.defaults?.y ?? 0,
         ...JSON.parse(JSON.stringify(fig.defaults || {}))
       };
+
+      if (fig.kind === "external_svg") {
+        const fitScale = getExternalFigureFitScale(fig);
+        const initialScale = layer.s ?? 0.52;
+        layer.s = Math.min(initialScale, fitScale);
+      }
+
+      if (canCenterPreset(fig)) {
+        applyCenterPresetToLayer(layer, selectedPresetId);
+      }
 
       state.layers.push(layer);
       overlay.remove();
