@@ -507,6 +507,7 @@
       } catch (_) {
         filename = filePart;
       }
+      filename = filename.replace(/&#39;/g, "'").replace(/&apos;/g, "'");
       return `./figures/${filename}`;
     };
 
@@ -523,7 +524,7 @@
         // ignore parse errors, regex fallback below
       }
 
-      const regexMatches = text.match(/[^"'\s<>]+\.svg(?:\?[^"'\s<>]*)?/gi) || [];
+      const regexMatches = text.match(/[^"\s<>]+\.svg(?:\?[^"\s<>]*)?/gi) || [];
       regexMatches.forEach((raw) => {
         const path = normalizeFigurePath(raw);
         if (path) found.add(path);
@@ -994,7 +995,7 @@
 
     // Разделяем белый/черный по эффективному цвету до перекраски.
     // Дополнительно не трогаем полупрозрачные "шумы" в источнике.
-    if (fillClass === "white" && effectiveFillOpacity >= 0.75) {
+    if ((fillClass === "white" || fillClass === "black") && effectiveFillOpacity >= 0.75) {
       styleMap.delete("fill");
       styleMap.delete("fill-opacity");
       node.setAttribute("fill", fill);
