@@ -277,6 +277,25 @@
       align-items:end;
       margin-bottom:8px;
     }
+
+    .paletteGrid{
+      display:grid;
+      grid-template-columns: repeat(5, minmax(0, 1fr));
+      gap:6px;
+    }
+    .paletteSwatch{
+      width:100%;
+      height:30px;
+      border-radius:8px;
+      border:1px solid var(--line);
+      cursor:pointer;
+      padding:0;
+    }
+    .paletteSwatch.active{
+      outline:2px solid #7dd3fc;
+      outline-offset:1px;
+      border-color:#7dd3fc;
+    }
   </style>
 </head>
 <body>
@@ -387,6 +406,31 @@
     loadJSON("./figures.json")
   ]);
 
+  const heraldicPalette = [
+    "#FFBB06", "#FFF500", "#F4C551", "#FFFFFF", "#B4BEBF",
+    "#CACACC", "#5E3306", "#C07F55", "#6E2202", "#FE0000",
+    "#FF93B5", "#860000", "#00B357", "#02CC00", "#015601",
+    "#0000FE", "#5DC6F3", "#06186E", "#890098", "#C18CFE",
+    "#BF285B", "#FF7F00", "#FFA163", "#FF633D", "#000000"
+  ];
+
+  const patternTypes = [
+    { id: "solid", name: "Сплошной" },
+    { id: "checky", name: "Шахматный" },
+    { id: "paly", name: "Полосы вертикальные" },
+    { id: "barry", name: "Полосы горизонтальные" },
+    { id: "lozengy", name: "Ромбами" },
+    { id: "fence", name: "Частокол" }
+  ];
+
+  const fieldModes = [
+    { id: "solid", name: "Сплошное", segments: 1 },
+    { id: "per_fess", name: "Рассечённое (по горизонтали)", segments: 2 },
+    { id: "per_pale", name: "Рассечённое (по вертикали)", segments: 2 },
+    { id: "quarterly", name: "Четверочастное", segments: 4 },
+    { id: "pale_thirds", name: "Три вертикальных части", segments: 3 }
+  ];
+
   // ====== UI elements ======
   const el = (id) => document.getElementById(id);
   const shieldShapeSel = el("shieldShape");
@@ -414,7 +458,7 @@
       mode: fieldModes[0].id,
       patternSize: +patternSizeInp.value,
       segments: [
-        { pattern: "solid", a: "#1e3a8a", b: "#f8fafc" }
+        { pattern: "solid", a: "#0000FE", b: "#FFFFFF" }
       ]
     },
     layers: []
@@ -423,6 +467,37 @@
   // ====== Helpers ======
   const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
   const uid = () => Math.random().toString(16).slice(2) + Date.now().toString(16);
+
+  function normalizePaletteColor(value) {
+    const hex = String(value || "").trim().toUpperCase();
+    return heraldicPalette.includes(hex) ? hex : heraldicPalette[0];
+  }
+
+  function createPalettePicker(value, onChange) {
+    const wrap = document.createElement("div");
+    wrap.className = "paletteGrid";
+
+    let current = normalizePaletteColor(value);
+    const buttons = [];
+
+    heraldicPalette.forEach((color) => {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.className = "paletteSwatch" + (color === current ? " active" : "");
+      b.style.background = color;
+      b.title = color;
+      b.setAttribute("aria-label", color);
+      b.onclick = () => {
+        current = color;
+        buttons.forEach((btn) => btn.classList.toggle("active", btn === b));
+        onChange(color);
+      };
+      buttons.push(b);
+      wrap.appendChild(b);
+    });
+
+    return wrap;
+  }
 
   function makeSVG(tag, attrs = {}) {
     const n = document.createElementNS("http://www.w3.org/2000/svg", tag);
@@ -469,8 +544,8 @@
     const need = m.segments;
 
     const segs = state.field.segments.slice();
-    const fallbackA = segs[0]?.a || "#1e3a8a";
-    const fallbackB = segs[0]?.b || "#f8fafc";
+    const fallbackA = segs[0]?.a || "#0000FE";
+    const fallbackB = segs[0]?.b || "#FFFFFF";
     const fallbackP = segs[0]?.pattern || "solid";
 
     while (segs.length < need) {
@@ -577,9 +652,9 @@
   }
 
   function segmentFill(defs, seg, segIndex, size) {
-    if (!seg || seg.pattern === "solid") return { fill: seg?.a || "#1e3a8a" };
+    if (!seg || seg.pattern === "solid") return { fill: seg?.a || "#0000FE" };
     const pid = `pat_${segIndex}_${uid().slice(0,8)}`;
-    buildPatternDef(defs, pid, seg.pattern, size, seg.a || "#1e3a8a", seg.b || "#f8fafc");
+    buildPatternDef(defs, pid, seg.pattern, size, seg.a || "#0000FE", seg.b || "#FFFFFF");
     return { fill: `url(#${pid})` };
   }
 
@@ -752,7 +827,7 @@
     const dy = (layer.y ?? 0) * (VB_H/2);
     g.setAttribute("transform", `translate(${dx} ${dy})`);
 
-    const fill = layer.color || "#f59e0b";
+    const fill = layer.color || "#FF7F00";
     const opacity = clamp(layer.opacity ?? 1, 0, 1);
 
     function add(node){
@@ -1202,11 +1277,11 @@
       const cWrap = document.createElement("div");
       cWrap.className = "full";
       cWrap.innerHTML = `<label>Цвет фигуры</label>`;
-      const cInp = document.createElement("input");
-      cInp.type = "color";
-      cInp.value = layer.color || "#f59e0b";
-      cInp.oninput = () => { layer.color = cInp.value; render(); };
-      cWrap.appendChild(cInp);
+      const cSel = createPalettePicker(layer.color || "#FF7F00", (value) => {
+        layer.color = value;
+        render();
+      });
+      cWrap.appendChild(cSel);
 
       const oWrap = document.createElement("div");
       oWrap.innerHTML = `<label>Прозрачность</label>`;
@@ -1389,11 +1464,11 @@
 
       const aWrap = document.createElement("div");
       aWrap.innerHTML = "<label>Цвет A</label>";
-      const aInp = document.createElement("input");
-      aInp.type = "color";
-      aInp.value = seg.a || "#1e3a8a";
-      aInp.oninput = () => { seg.a = aInp.value; render(); };
-      aWrap.appendChild(aInp);
+      const aSel = createPalettePicker(seg.a || "#0000FE", (value) => {
+        seg.a = value;
+        render();
+      });
+      aWrap.appendChild(aSel);
 
       row1.appendChild(pWrap);
       row1.appendChild(aWrap);
@@ -1403,11 +1478,11 @@
       row2.className = "segRow";
       const bWrap = document.createElement("div");
       bWrap.innerHTML = "<label>Цвет B (для паттернов)</label>";
-      const bInp = document.createElement("input");
-      bInp.type = "color";
-      bInp.value = seg.b || "#f8fafc";
-      bInp.oninput = () => { seg.b = bInp.value; render(); };
-      bWrap.appendChild(bInp);
+      const bSel = createPalettePicker(seg.b || "#FFFFFF", (value) => {
+        seg.b = value;
+        render();
+      });
+      bWrap.appendChild(bSel);
 
       const note = document.createElement("div");
       note.innerHTML = `<label>&nbsp;</label><div class="smallnote">Для «сплошного» используется только цвет A.</div>`;
@@ -1478,9 +1553,8 @@
       figSel.appendChild(og);
     }
 
-    const colorInp = document.createElement("input");
-    colorInp.type = "color";
-    colorInp.value = "#f59e0b";
+    let selectedColor = "#FF7F00";
+    const colorSel = createPalettePicker(selectedColor, (value) => { selectedColor = value; });
 
     const note = document.createElement("div");
     note.className = "smallnote";
@@ -1491,7 +1565,7 @@
     left.appendChild(figSel);
 
     right.innerHTML = `<label>Цвет фигуры</label>`;
-    right.appendChild(colorInp);
+    right.appendChild(colorSel);
 
     wrap.appendChild(left);
     wrap.appendChild(right);
@@ -1513,7 +1587,7 @@
       const layer = {
         id: uid(),
         fig,
-        color: colorInp.value,
+        color: normalizePaletteColor(selectedColor),
         opacity: 1,
         x: fig.defaults?.x ?? 0,
         y: fig.defaults?.y ?? 0,
@@ -1623,6 +1697,14 @@
 
     shieldShapeSel.onchange = () => { state.shieldShape = shieldShapeSel.value; render(); };
     strokeColorInp.oninput = () => { state.strokeColor = strokeColorInp.value; render(); };
+
+    ensureFieldSegmentsCount();
+    state.field.segments = state.field.segments.map((seg) => ({
+      ...seg,
+      a: normalizePaletteColor(seg.a),
+      b: normalizePaletteColor(seg.b)
+    }));
+
     strokeWidthInp.oninput = () => { state.strokeWidth = +strokeWidthInp.value; render(); };
     bgModeSel.onchange = () => { state.bgMode = bgModeSel.value; render(); };
 
@@ -1648,7 +1730,7 @@
 
       state.field.mode = "solid";
       state.field.patternSize = 64;
-      state.field.segments = [{ pattern: "solid", a: "#1e3a8a", b: "#f8fafc" }];
+      state.field.segments = [{ pattern: "solid", a: "#0000FE", b: "#FFFFFF" }];
 
       state.layers = [];
 
@@ -1664,7 +1746,7 @@
       state.layers.push({
         id: uid(),
         fig: figureCatalog.find(f => f.id === "bordure"),
-        color: "#111827",
+        color: "#000000",
         opacity: 1,
         x: 0, y: 0,
         ...JSON.parse(JSON.stringify(figureCatalog.find(f => f.id === "bordure").defaults))
@@ -1672,7 +1754,7 @@
       state.layers.push({
         id: uid(),
         fig: figureCatalog.find(f => f.id === "cross"),
-        color: "#f8fafc",
+        color: "#FFFFFF",
         opacity: 0.95,
         x: 0, y: 0,
         ...JSON.parse(JSON.stringify(figureCatalog.find(f => f.id === "cross").defaults))
@@ -1689,7 +1771,7 @@
     state.layers.push({
       id: uid(),
       fig: figureCatalog.find(f => f.id === "bordure"),
-      color: "#111827",
+      color: "#000000",
       opacity: 1,
       x: 0, y: 0,
       ...JSON.parse(JSON.stringify(figureCatalog.find(f => f.id === "bordure").defaults))
@@ -1697,7 +1779,7 @@
     state.layers.push({
       id: uid(),
       fig: figureCatalog.find(f => f.id === "cross"),
-      color: "#f8fafc",
+      color: "#FFFFFF",
       opacity: 0.95,
       x: 0, y: 0,
       ...JSON.parse(JSON.stringify(figureCatalog.find(f => f.id === "cross").defaults))
