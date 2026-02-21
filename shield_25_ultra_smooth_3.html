@@ -296,6 +296,11 @@
       outline-offset:1px;
       border-color:#7dd3fc;
     }
+    .paletteSwatch.locked{
+      opacity:0.25;
+      cursor:not-allowed;
+      filter:saturate(0.3);
+    }
   </style>
 </head>
 <body>
@@ -323,6 +328,18 @@
             <option value="grid">Сетка</option>
           </select>
         </div>
+      </div>
+
+      <div class="field">
+        <div>
+          <label>Режим сословия</label>
+          <select id="rankMode"></select>
+        </div>
+        <div id="rankModeHint" class="smallnote"></div>
+      </div>
+
+      <div class="field one">
+        <div id="rankPaletteBox"></div>
       </div>
 
       <div class="field">
@@ -438,6 +455,9 @@
   const strokeWidthInp = el("strokeWidth");
   const bgModeSel = el("bgMode");
   const fieldModeSel = el("fieldMode");
+  const rankModeSel = el("rankMode");
+  const rankModeHint = el("rankModeHint");
+  const rankPaletteBox = el("rankPaletteBox");
   const patternSizeInp = el("patternSize");
   const fieldSegmentsBox = el("fieldSegments");
 
@@ -448,8 +468,29 @@
   const downloadSVGBtn = el("downloadSVG");
   const downloadPNGBtn = el("downloadPNG");
 
+
+  const heraldicPlaceholderCatalog = [
+    { group: "Гербовые", id: "heraldic_animal", name: "Животное (заглушка)", kind: "heraldic_placeholder", defaults: { x: 0, y: 0 } },
+    { group: "Гербовые", id: "heraldic_building", name: "Здание (заглушка)", kind: "heraldic_placeholder", defaults: { x: 0, y: 0 } },
+    { group: "Гербовые", id: "heraldic_other", name: "Иная гербовая фигура (заглушка)", kind: "heraldic_placeholder", defaults: { x: 0, y: 0 } }
+  ];
+
+  const fullFigureCatalog = [...figureCatalog, ...heraldicPlaceholderCatalog];
+
+  const rankRules = [
+    { id: "free", name: "Свободное редактирование", maxColors: null, limits: { honorable: null, simple: null, heraldic: null }, hint: "Без ограничений, как сейчас." },
+    { id: "knight", name: "Рыцарь", maxColors: 2, limits: { honorable: 1, simple: 0, heraldic: 0 }, hint: "2 цвета, 1 почётная фигура." },
+    { id: "freiherr", name: "Фрайгерр", maxColors: 2, limits: { honorable: 1, simple: 1, heraldic: 0 }, hint: "2 цвета, 1 почётная и 1 простая фигура." },
+    { id: "baron", name: "Барон", maxColors: 3, limits: { honorable: null, simple: null, heraldic: 1 }, hint: "3 цвета, до 1 гербовой фигуры, простые/почётные — без лимита." },
+    { id: "count", name: "Граф", maxColors: 3, limits: { honorable: null, simple: null, heraldic: 2 }, hint: "3 цвета, до 2 гербовых фигур, простые/почётные — без лимита." },
+    { id: "duke", name: "Герцог/Князь", maxColors: 4, limits: { honorable: null, simple: null, heraldic: 3 }, hint: "4 цвета, до 3 гербовых фигур, простые/почётные — без лимита." },
+    { id: "king", name: "Король", maxColors: 4, limits: { honorable: null, simple: null, heraldic: 4 }, hint: "4 цвета, до 4 гербовых фигур, простые/почётные — без лимита." }
+  ];
+
   // ====== State ======
   const state = {
+    rankMode: "free",
+    allowedColors: heraldicPalette.slice(0, 2),
     shieldShape: shieldShapes[0].id,
     strokeColor: strokeColorInp.value,
     strokeWidth: +strokeWidthInp.value,
@@ -473,7 +514,84 @@
     return heraldicPalette.includes(hex) ? hex : heraldicPalette[0];
   }
 
-  function createPalettePicker(value, onChange) {
+
+  function getRankRule(rankId = state.rankMode) {
+    return rankRules.find((r) => r.id === rankId) || rankRules[0];
+  }
+
+  function getFigureClass(fig) {
+    if (!fig) return "simple";
+    if (fig.group === "Почётные") return "honorable";
+    if (fig.group === "Гербовые") return "heraldic";
+    return "simple";
+  }
+
+  function countLayerClasses(layers = state.layers) {
+    return layers.reduce((acc, layer) => {
+      const c = getFigureClass(layer.fig);
+      acc[c] = (acc[c] || 0) + 1;
+      return acc;
+    }, { honorable: 0, simple: 0, heraldic: 0 });
+  }
+
+  function getRestrictionSet() {
+    const rule = getRankRule();
+    if (!rule.maxColors) return null;
+    const normalized = state.allowedColors.map(normalizePaletteColor);
+    return new Set(normalized.slice(0, rule.maxColors));
+  }
+
+  function ensureAllowedColorsCount() {
+    const rule = getRankRule();
+    if (!rule.maxColors) return;
+    const uniq = [];
+    for (const c of state.allowedColors.map(normalizePaletteColor)) {
+      if (!uniq.includes(c)) uniq.push(c);
+    }
+    for (const c of heraldicPalette) {
+      if (uniq.length >= rule.maxColors) break;
+      if (!uniq.includes(c)) uniq.push(c);
+    }
+    state.allowedColors = uniq.slice(0, rule.maxColors);
+  }
+
+  function enforcePaletteRestrictions() {
+    const allowed = getRestrictionSet();
+    if (!allowed) return;
+    const fallback = state.allowedColors[0] || heraldicPalette[0];
+    state.field.segments = state.field.segments.map((seg) => ({
+      ...seg,
+      a: allowed.has(normalizePaletteColor(seg.a)) ? normalizePaletteColor(seg.a) : fallback,
+      b: allowed.has(normalizePaletteColor(seg.b)) ? normalizePaletteColor(seg.b) : fallback
+    }));
+    state.layers.forEach((layer) => {
+      const color = normalizePaletteColor(layer.color);
+      if (!allowed.has(color)) layer.color = fallback;
+    });
+  }
+
+  function validateLayersForRule(rule) {
+    const counts = countLayerClasses();
+    for (const key of ["honorable", "simple", "heraldic"]) {
+      const limit = rule.limits[key];
+      if (limit !== null && counts[key] > limit) {
+        const title = key === "honorable" ? "почётных" : key === "simple" ? "простых" : "гербовых";
+        return `В режиме «${rule.name}» максимум ${limit} ${title} фигур(ы). Сейчас: ${counts[key]}.`;
+      }
+    }
+    return "";
+  }
+
+  function canAddFigureForCurrentRule(fig) {
+    const rule = getRankRule();
+    const cls = getFigureClass(fig);
+    const limit = rule.limits[cls];
+    if (limit === null) return true;
+    const counts = countLayerClasses();
+    return (counts[cls] || 0) < limit;
+  }
+
+  function createPalettePicker(value, onChange, opts = {}) {
     const wrap = document.createElement("div");
     wrap.className = "paletteGrid";
 
@@ -481,13 +599,16 @@
     const buttons = [];
 
     heraldicPalette.forEach((color) => {
+      const locked = opts.allowedColors && !opts.allowedColors.has(color);
       const b = document.createElement("button");
       b.type = "button";
-      b.className = "paletteSwatch" + (color === current ? " active" : "");
+      b.className = "paletteSwatch" + (color === current ? " active" : "") + (locked ? " locked" : "");
       b.style.background = color;
       b.title = color;
       b.setAttribute("aria-label", color);
+      b.disabled = !!locked;
       b.onclick = () => {
+        if (locked) return;
         current = color;
         buttons.forEach((btn) => btn.classList.toggle("active", btn === b));
         onChange(color);
@@ -1144,6 +1265,10 @@
       return g;
     }
 
+    if (kind === "heraldic_placeholder") {
+      return g;
+    }
+
     const fallback = makeSVG("text", { x: 40, y: 80, fill: "#fff" });
     fallback.textContent = "Неизвестная фигура";
     g.appendChild(fallback);
@@ -1280,7 +1405,7 @@
       const cSel = createPalettePicker(layer.color || "#FF7F00", (value) => {
         layer.color = value;
         render();
-      });
+      }, { allowedColors: getRestrictionSet() });
       cWrap.appendChild(cSel);
 
       const oWrap = document.createElement("div");
@@ -1467,7 +1592,7 @@
       const aSel = createPalettePicker(seg.a || "#0000FE", (value) => {
         seg.a = value;
         render();
-      });
+      }, { allowedColors: getRestrictionSet() });
       aWrap.appendChild(aSel);
 
       row1.appendChild(pWrap);
@@ -1481,7 +1606,7 @@
       const bSel = createPalettePicker(seg.b || "#FFFFFF", (value) => {
         seg.b = value;
         render();
-      });
+      }, { allowedColors: getRestrictionSet() });
       bWrap.appendChild(bSel);
 
       const note = document.createElement("div");
@@ -1493,6 +1618,58 @@
 
       fieldSegmentsBox.appendChild(card);
     }
+  }
+
+
+  function renderRankUI() {
+    const rule = getRankRule();
+    rankModeHint.textContent = rule.hint;
+    rankPaletteBox.innerHTML = "";
+
+    if (!rule.maxColors) {
+      rankPaletteBox.innerHTML = `<label>Ограничение цветов</label><div class="smallnote">В свободном режиме все цвета палитры доступны.</div>`;
+      return;
+    }
+
+    ensureAllowedColorsCount();
+
+    const title = document.createElement("label");
+    title.textContent = `Допустимые цвета (${rule.maxColors} шт.)`;
+    rankPaletteBox.appendChild(title);
+
+    const current = new Set(state.allowedColors);
+    const grid = document.createElement("div");
+    grid.className = "paletteGrid";
+
+    heraldicPalette.forEach((color) => {
+      const b = document.createElement("button");
+      b.type = "button";
+      const active = current.has(color);
+      b.className = "paletteSwatch" + (active ? " active" : "");
+      b.style.background = color;
+      b.title = color;
+      b.onclick = () => {
+        const set = new Set(state.allowedColors.map(normalizePaletteColor));
+        if (set.has(color)) return;
+        let next = [...set];
+        if (next.length >= rule.maxColors) next = next.slice(1);
+        next.push(color);
+        state.allowedColors = next;
+        ensureAllowedColorsCount();
+        enforcePaletteRestrictions();
+        renderRankUI();
+        renderFieldUI();
+        render();
+      };
+      grid.appendChild(b);
+    });
+
+    rankPaletteBox.appendChild(grid);
+    const note = document.createElement("div");
+    note.className = "smallnote";
+    note.style.marginTop = "8px";
+    note.textContent = "Эти цвета применяются ко всем полям и фигурам. Контур щита не ограничивается.";
+    rankPaletteBox.appendChild(note);
   }
 
   // ====== Modal-like prompt for adding figure ======
@@ -1540,21 +1717,23 @@
     const figSel = document.createElement("select");
     figSel.style.width = "100%";
 
-    const groups = [...new Set(figureCatalog.map(f => f.group))];
+    const groups = [...new Set(fullFigureCatalog.map(f => f.group))];
     for (const g of groups) {
       const og = document.createElement("optgroup");
       og.label = g;
-      figureCatalog.filter(f => f.group === g).forEach(f => {
+      fullFigureCatalog.filter(f => f.group === g).forEach(f => {
         const o = document.createElement("option");
         o.value = f.id;
-        o.textContent = f.name;
+        const canAdd = canAddFigureForCurrentRule(f);
+        o.textContent = canAdd ? f.name : `${f.name} (лимит режима)`;
+        o.disabled = !canAdd;
         og.appendChild(o);
       });
       figSel.appendChild(og);
     }
 
     let selectedColor = "#FF7F00";
-    const colorSel = createPalettePicker(selectedColor, (value) => { selectedColor = value; });
+    const colorSel = createPalettePicker(selectedColor, (value) => { selectedColor = value; }, { allowedColors: getRestrictionSet() });
 
     const note = document.createElement("div");
     note.className = "smallnote";
@@ -1581,8 +1760,12 @@
     ok.textContent = "Добавить";
     ok.onclick = () => {
       const figId = figSel.value;
-      const fig = figureCatalog.find(f => f.id === figId);
+      const fig = fullFigureCatalog.find(f => f.id === figId);
       if (!fig) return;
+      if (!canAddFigureForCurrentRule(fig)) {
+        alert("Для выбранного режима достигнут лимит фигур этого типа.");
+        return;
+      }
 
       const layer = {
         id: uid(),
@@ -1687,6 +1870,14 @@
     });
     shieldShapeSel.value = state.shieldShape;
 
+    rankRules.forEach((m) => {
+      const o = document.createElement("option");
+      o.value = m.id;
+      o.textContent = m.name;
+      rankModeSel.appendChild(o);
+    });
+    rankModeSel.value = state.rankMode;
+
     fieldModes.forEach(m => {
       const o = document.createElement("option");
       o.value = m.id;
@@ -1696,6 +1887,22 @@
     fieldModeSel.value = state.field.mode;
 
     shieldShapeSel.onchange = () => { state.shieldShape = shieldShapeSel.value; render(); };
+
+    rankModeSel.onchange = () => {
+      const nextRule = getRankRule(rankModeSel.value);
+      const violation = validateLayersForRule(nextRule);
+      if (violation) {
+        alert(violation);
+        rankModeSel.value = state.rankMode;
+        return;
+      }
+      state.rankMode = nextRule.id;
+      ensureAllowedColorsCount();
+      enforcePaletteRestrictions();
+      renderRankUI();
+      renderFieldUI();
+      render();
+    };
     strokeColorInp.oninput = () => { state.strokeColor = strokeColorInp.value; render(); };
 
     ensureFieldSegmentsCount();
@@ -1724,6 +1931,8 @@
 
     resetBtn.onclick = () => {
       state.shieldShape = shieldShapes[0].id;
+      state.rankMode = "free";
+      state.allowedColors = heraldicPalette.slice(0, 2);
       state.strokeColor = "#0b0d12";
       state.strokeWidth = 6;
       state.bgMode = "none";
@@ -1735,6 +1944,7 @@
       state.layers = [];
 
       shieldShapeSel.value = state.shieldShape;
+      rankModeSel.value = state.rankMode;
       strokeColorInp.value = state.strokeColor;
       strokeWidthInp.value = state.strokeWidth;
       bgModeSel.value = state.bgMode;
@@ -1742,6 +1952,7 @@
       patternSizeInp.value = state.field.patternSize;
 
       renderFieldUI();
+      renderRankUI();
 
       state.layers.push({
         id: uid(),
@@ -1766,6 +1977,7 @@
     downloadSVGBtn.onclick = downloadSVG;
     downloadPNGBtn.onclick = () => downloadPNG().catch(err => alert(err.message));
 
+    renderRankUI();
     renderFieldUI();
 
     state.layers.push({
