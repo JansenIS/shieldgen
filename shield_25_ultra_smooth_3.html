@@ -1986,6 +1986,82 @@
     const previewGrid = document.createElement("div");
     previewGrid.className = "figurePreviewGrid";
 
+    function renderFigureIcon(icon, fig, color) {
+      icon.innerHTML = "";
+      const sw = 86;
+      const sh = 96;
+      const clipId = `clip_preview_${Math.random().toString(36).slice(2, 10)}`;
+      const layer = {
+        id: `preview_${fig.id}`,
+        fig,
+        color,
+        opacity: 1,
+        x: 0,
+        y: 0,
+        ...(fig.defaults ? JSON.parse(JSON.stringify(fig.defaults)) : {})
+      };
+
+      const svg = makeSVG("svg", {
+        xmlns: "http://www.w3.org/2000/svg",
+        viewBox: `0 0 ${VB_W} ${VB_H}`,
+        width: sw,
+        height: sh,
+        preserveAspectRatio: "xMidYMid meet"
+      });
+
+      const defs = makeSVG("defs");
+      const cp = makeSVG("clipPath", { id: clipId });
+      cp.appendChild(makeSVG("path", { d: getShieldPathD() }));
+      defs.appendChild(cp);
+      svg.appendChild(defs);
+
+      if (fig.kind === "external_svg") {
+        let entry = externalSvgCache.get(fig.src);
+        if (!entry) {
+          entry = { status: "loading", svg: null };
+          entry.promise = loadSVG(fig.src)
+            .then((svgText) => {
+              const doc = new DOMParser().parseFromString(svgText, "image/svg+xml");
+              const svgEl = doc.documentElement;
+              if (!svgEl || svgEl.nodeName.toLowerCase() !== "svg") {
+                throw new Error(`Некорректный SVG: ${fig.src}`);
+              }
+              entry.status = "ready";
+              entry.svg = svgEl;
+              renderFigurePreview();
+            })
+            .catch((err) => {
+              console.error(err);
+              entry.status = "error";
+            });
+          externalSvgCache.set(fig.src, entry);
+        }
+
+        if (entry.status === "ready" && entry.svg) {
+          const ext = entry.svg.cloneNode(true);
+          ext.setAttribute("x", VB_W * 0.08);
+          ext.setAttribute("y", VB_H * 0.08);
+          ext.setAttribute("width", VB_W * 0.84);
+          ext.setAttribute("height", VB_H * 0.84);
+          ext.setAttribute("preserveAspectRatio", "xMidYMid meet");
+          repaintExternalSvgTree(ext, color, 1);
+          const g = makeSVG("g", { "clip-path": `url(#${clipId})` });
+          g.appendChild(ext);
+          svg.appendChild(g);
+        } else {
+          const img = document.createElement("img");
+          img.src = fig.src;
+          img.alt = fig.name;
+          icon.appendChild(img);
+          return;
+        }
+      } else {
+        svg.appendChild(figureToSVG(layer, clipId));
+      }
+
+      icon.appendChild(svg);
+    }
+
     function renderFigurePreview() {
       const selectedId = figSel.value;
       previewGrid.innerHTML = "";
@@ -2001,14 +2077,7 @@
 
         const icon = document.createElement("div");
         icon.className = "figurePreviewIcon";
-        if (f.kind === "external_svg") {
-          const img = document.createElement("img");
-          img.src = f.src;
-          img.alt = f.name;
-          icon.appendChild(img);
-        } else {
-          icon.textContent = "SVG";
-        }
+        renderFigureIcon(icon, f, normalizePaletteColor(selectedColor));
 
         const name = document.createElement("div");
         name.textContent = f.name;
@@ -2040,7 +2109,7 @@
     }
 
     let selectedColor = "#FF7F00";
-    const colorSel = createPalettePicker(selectedColor, (value) => { selectedColor = value; }, { allowedColors: getRestrictionSet() });
+    const colorSel = createPalettePicker(selectedColor, (value) => { selectedColor = value; renderFigurePreview(); }, { allowedColors: getRestrictionSet() });
 
     const note = document.createElement("div");
     note.className = "smallnote";
