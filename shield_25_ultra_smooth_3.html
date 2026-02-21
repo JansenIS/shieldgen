@@ -726,21 +726,25 @@
     return "other";
   }
 
-  function applyExternalSvgPaint(node, fill, opacity) {
+  function resolveSvgPaint(node, styleMap, propName, inheritedValue) {
+    const attr = node.getAttribute(propName);
+    const styleValue = styleMap.get(propName);
+    const direct = attr ?? styleValue;
+    if (direct == null || direct === "") return inheritedValue;
+    const normalized = direct.trim().toLowerCase();
+    if (!normalized || normalized === "inherit") return inheritedValue;
+    return direct;
+  }
+
+  function applyExternalSvgPaint(node, fill, opacity, inheritedPaint = {}) {
     const styleMap = parseInlineSvgStyle(node);
-    const attrFill = node.getAttribute("fill");
-    const attrStroke = node.getAttribute("stroke");
-    const styleFill = styleMap.get("fill");
-    const styleStroke = styleMap.get("stroke");
 
-    const fillValue = attrFill ?? styleFill;
-    const strokeValue = attrStroke ?? styleStroke;
+    const effectiveFill = resolveSvgPaint(node, styleMap, "fill", inheritedPaint.fill ?? null);
+    const effectiveStroke = resolveSvgPaint(node, styleMap, "stroke", inheritedPaint.stroke ?? null);
+    const fillClass = classifySvgPaint(effectiveFill);
+    const strokeClass = classifySvgPaint(effectiveStroke);
 
-    const fillClass = classifySvgPaint(fillValue);
-    const strokeClass = classifySvgPaint(strokeValue);
-
-    // Перекрашиваем ТОЛЬКО белые элементы (и заливку, и обводку).
-    // Черные элементы сохраняем как есть ещё на этапе классификации.
+    // Важно: разделяем белый/черный ДО перекраски, по эффективному (унаследованному) цвету.
     if (fillClass === "white") {
       styleMap.delete("fill");
       styleMap.delete("fill-opacity");
@@ -762,6 +766,28 @@
     const nextStyle = [...styleMap.entries()].map(([k, v]) => `${k}:${v}`).join(";");
     if (nextStyle) node.setAttribute("style", nextStyle);
     else node.removeAttribute("style");
+
+    const inheritedAfterFill = resolveSvgPaint(node, styleMap, "fill", inheritedPaint.fill ?? null);
+    const inheritedAfterStroke = resolveSvgPaint(node, styleMap, "stroke", inheritedPaint.stroke ?? null);
+    return { fill: inheritedAfterFill, stroke: inheritedAfterStroke };
+  }
+
+  function repaintExternalSvgTree(root, fill, opacity) {
+    const paintableTags = new Set(["path", "rect", "circle", "ellipse", "polygon", "polyline", "line", "text"]);
+
+    function walk(node, inheritedPaint) {
+      if (!node || node.nodeType !== Node.ELEMENT_NODE) return;
+      const tag = node.nodeName.toLowerCase();
+      let nextPaint = inheritedPaint;
+
+      if (tag === "g" || tag === "svg" || paintableTags.has(tag)) {
+        nextPaint = applyExternalSvgPaint(node, fill, opacity, inheritedPaint);
+      }
+
+      for (const child of node.children) walk(child, nextPaint);
+    }
+
+    walk(root, { fill: null, stroke: null });
   }
 
   function getShieldPathD() {
@@ -1437,15 +1463,7 @@
         svg.setAttribute("height", h);
         svg.setAttribute("preserveAspectRatio", "xMidYMid meet");
 
-        const paintableTags = new Set(["path", "rect", "circle", "ellipse", "polygon", "polyline"]);
-        const walker = document.createTreeWalker(svg, NodeFilter.SHOW_ELEMENT);
-        while (walker.nextNode()) {
-          const node = walker.currentNode;
-          const tag = node.nodeName.toLowerCase();
-          if (paintableTags.has(tag)) {
-            applyExternalSvgPaint(node, fill, opacity);
-          }
-        }
+        repaintExternalSvgTree(svg, fill, opacity);
 
         g.appendChild(svg);
       } else {
