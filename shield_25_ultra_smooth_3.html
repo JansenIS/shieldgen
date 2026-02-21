@@ -683,6 +683,59 @@
     return n;
   }
 
+  function parseInlineSvgStyle(node) {
+    const style = (node.getAttribute("style") || "").trim();
+    const map = new Map();
+    style.split(";").map((part) => part.trim()).filter(Boolean).forEach((part) => {
+      const idx = part.indexOf(":");
+      if (idx < 0) return;
+      const key = part.slice(0, idx).trim().toLowerCase();
+      const value = part.slice(idx + 1).trim();
+      if (key) map.set(key, value);
+    });
+    return map;
+  }
+
+  function applyExternalSvgPaint(node, fill, opacity) {
+    const styleMap = parseInlineSvgStyle(node);
+    const attrFill = node.getAttribute("fill");
+    const attrStroke = node.getAttribute("stroke");
+    const styleFill = styleMap.get("fill");
+    const styleStroke = styleMap.get("stroke");
+
+    const hasExplicitFill = (attrFill ?? styleFill) != null;
+    const hasExplicitStroke = (attrStroke ?? styleStroke) != null;
+    const fillValue = (attrFill ?? styleFill ?? "").toLowerCase();
+    const strokeValue = (attrStroke ?? styleStroke ?? "").toLowerCase();
+
+    const paintFill = (!hasExplicitFill && !hasExplicitStroke) || (fillValue !== "none");
+    const paintStroke = hasExplicitStroke && strokeValue !== "none";
+
+    ["fill", "stroke", "fill-opacity", "stroke-opacity"].forEach((k) => styleMap.delete(k));
+
+    if (paintFill) {
+      node.setAttribute("fill", fill);
+      node.setAttribute("fill-opacity", opacity);
+      styleMap.set("fill", fill);
+      styleMap.set("fill-opacity", String(opacity));
+    } else {
+      node.setAttribute("fill", "none");
+      node.removeAttribute("fill-opacity");
+      styleMap.set("fill", "none");
+    }
+
+    if (paintStroke) {
+      node.setAttribute("stroke", fill);
+      node.setAttribute("stroke-opacity", opacity);
+      styleMap.set("stroke", fill);
+      styleMap.set("stroke-opacity", String(opacity));
+    }
+
+    const nextStyle = [...styleMap.entries()].map(([k, v]) => `${k}:${v}`).join(";");
+    if (nextStyle) node.setAttribute("style", nextStyle);
+    else node.removeAttribute("style");
+  }
+
   function getShieldPathD() {
     const s = shieldShapes.find(x => x.id === state.shieldShape) || shieldShapes[0];
     return s.d;
@@ -1362,16 +1415,7 @@
           const node = walker.currentNode;
           const tag = node.nodeName.toLowerCase();
           if (paintableTags.has(tag)) {
-            if (node.getAttribute("fill") !== "none") {
-              node.setAttribute("fill", fill);
-            }
-            if (node.getAttribute("stroke") && node.getAttribute("stroke") !== "none") {
-              node.setAttribute("stroke", fill);
-            }
-            node.setAttribute("fill-opacity", opacity);
-            if (node.getAttribute("stroke")) {
-              node.setAttribute("stroke-opacity", opacity);
-            }
+            applyExternalSvgPaint(node, fill, opacity);
           }
         }
 
