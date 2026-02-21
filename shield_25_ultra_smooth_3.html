@@ -473,6 +473,12 @@
     return res.json();
   }
 
+  async function loadSVG(path) {
+    const res = await fetch(path);
+    if (!res.ok) throw new Error(`Не удалось загрузить ${path}: ${res.status}`);
+    return res.text();
+  }
+
   const [shieldShapes, figureCatalog, heraldicFigureCatalog] = await Promise.all([
     loadJSON("./shield_shapes.json"),
     loadJSON("./figures.json"),
@@ -518,6 +524,8 @@
   const fieldSegmentsBox = el("fieldSegments");
 
   const addFigureBtn = el("addFigure");
+
+  const externalSvgCache = new Map();
   const resetBtn = el("reset");
   const layersBox = el("layers");
   const svgBox = el("svgBox");
@@ -1318,16 +1326,69 @@
       const s = clamp(layer.s ?? 0.52, 0.12, 1.5);
       const w = VB_W * s;
       const h = VB_H * s;
-      const image = makeSVG("image", {
-        href: fig.src,
-        x: cx0 - w / 2,
-        y: cy0 - h / 2,
-        width: w,
-        height: h,
-        preserveAspectRatio: "xMidYMid meet",
-        opacity
-      });
-      g.appendChild(image);
+
+      let entry = externalSvgCache.get(fig.src);
+      if (!entry) {
+        entry = { status: "loading", svg: null };
+        entry.promise = loadSVG(fig.src)
+          .then((svgText) => {
+            const doc = new DOMParser().parseFromString(svgText, "image/svg+xml");
+            const svgEl = doc.documentElement;
+            if (!svgEl || svgEl.nodeName.toLowerCase() !== "svg") {
+              throw new Error(`Некорректный SVG: ${fig.src}`);
+            }
+            entry.status = "ready";
+            entry.svg = svgEl;
+            render();
+          })
+          .catch((err) => {
+            console.error(err);
+            entry.status = "error";
+          });
+        externalSvgCache.set(fig.src, entry);
+      }
+
+      if (entry.status === "ready" && entry.svg) {
+        const svg = entry.svg.cloneNode(true);
+        svg.setAttribute("x", cx0 - w / 2);
+        svg.setAttribute("y", cy0 - h / 2);
+        svg.setAttribute("width", w);
+        svg.setAttribute("height", h);
+        svg.setAttribute("preserveAspectRatio", "xMidYMid meet");
+
+        const paintableTags = new Set(["path", "rect", "circle", "ellipse", "polygon", "polyline"]);
+        const walker = document.createTreeWalker(svg, NodeFilter.SHOW_ELEMENT);
+        while (walker.nextNode()) {
+          const node = walker.currentNode;
+          const tag = node.nodeName.toLowerCase();
+          if (paintableTags.has(tag)) {
+            if (node.getAttribute("fill") !== "none") {
+              node.setAttribute("fill", fill);
+            }
+            if (node.getAttribute("stroke") && node.getAttribute("stroke") !== "none") {
+              node.setAttribute("stroke", fill);
+            }
+            node.setAttribute("fill-opacity", opacity);
+            if (node.getAttribute("stroke")) {
+              node.setAttribute("stroke-opacity", opacity);
+            }
+          }
+        }
+
+        g.appendChild(svg);
+      } else {
+        const image = makeSVG("image", {
+          href: fig.src,
+          x: cx0 - w / 2,
+          y: cy0 - h / 2,
+          width: w,
+          height: h,
+          preserveAspectRatio: "xMidYMid meet",
+          opacity
+        });
+        g.appendChild(image);
+      }
+
       return g;
     }
 
