@@ -995,7 +995,7 @@
 
     // Разделяем белый/черный по эффективному цвету до перекраски.
     // Дополнительно не трогаем полупрозрачные "шумы" в источнике.
-    if ((fillClass === "white" || fillClass === "black") && effectiveFillOpacity >= 0.75) {
+    if (fillClass === "white" && effectiveFillOpacity >= 0.75) {
       styleMap.delete("fill");
       styleMap.delete("fill-opacity");
       node.setAttribute("fill", fill);
