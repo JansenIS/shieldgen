@@ -1509,6 +1509,7 @@
         svg.setAttribute("width", w);
         svg.setAttribute("height", h);
         svg.setAttribute("preserveAspectRatio", "xMidYMid meet");
+        svg.setAttribute("overflow", "visible");
 
         repaintExternalSvgTree(svg, fill, opacity);
 
@@ -2070,6 +2071,7 @@
           ext.setAttribute("width", VB_W * 0.84);
           ext.setAttribute("height", VB_H * 0.84);
           ext.setAttribute("preserveAspectRatio", "xMidYMid meet");
+          ext.setAttribute("overflow", "visible");
           repaintExternalSvgTree(ext, color, 1);
           const g = makeSVG("g", { "clip-path": `url(#${clipId})` });
           g.appendChild(ext);
