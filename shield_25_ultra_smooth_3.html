@@ -488,22 +488,61 @@
   ]);
 
   async function discoverFigureFilesFromDirectory() {
-    try {
-      const res = await fetch("./figures/");
-      if (!res.ok) return [];
-      const html = await res.text();
-      const hrefMatches = [...html.matchAll(/href=["']([^"']+\.svg(?:\?[^"']*)?)["']/gi)];
-      const paths = new Set();
-      hrefMatches.forEach((m) => {
-        const href = m[1].split("?")[0];
-        const filename = href.split("/").pop();
-        if (!filename) return;
-        paths.add(`./figures/${decodeURIComponent(filename)}`);
+    const candidates = ["./figures/", "./figures", "./figures/index.html"];
+
+    const normalizeFigurePath = (href) => {
+      if (!href) return null;
+      const clean = href.split("?")[0].split("#")[0].trim();
+      if (!clean) return null;
+      const lower = clean.toLowerCase();
+      if (!lower.endsWith(".svg")) return null;
+
+      const filePart = clean.split("/").pop();
+      if (!filePart) return null;
+
+      let filename;
+      try {
+        filename = decodeURIComponent(filePart);
+      } catch (_) {
+        filename = filePart;
+      }
+      return `./figures/${filename}`;
+    };
+
+    const extractSvgPathsFromHtml = (html) => {
+      const found = new Set();
+      const doc = new DOMParser().parseFromString(html, "text/html");
+
+      doc.querySelectorAll("a[href]").forEach((a) => {
+        const path = normalizeFigurePath(a.getAttribute("href"));
+        if (path) found.add(path);
       });
-      return [...paths];
-    } catch (_) {
-      return [];
+
+      const regexMatches = html.match(/[^"'\s<>]+\.svg(?:\?[^"'\s<>]*)?/gi) || [];
+      regexMatches.forEach((raw) => {
+        const path = normalizeFigurePath(raw);
+        if (path) found.add(path);
+      });
+
+      return [...found];
+    };
+
+    for (const url of candidates) {
+      try {
+        const res = await fetch(url);
+        if (!res.ok) continue;
+        const contentType = (res.headers.get("content-type") || "").toLowerCase();
+        if (!contentType.includes("html") && !contentType.includes("text/plain")) continue;
+
+        const html = await res.text();
+        const paths = extractSvgPathsFromHtml(html);
+        if (paths.length) return paths;
+      } catch (_) {
+        // fallback to next candidate
+      }
     }
+
+    return [];
   }
 
   function fileNameToTitle(path) {
@@ -515,16 +554,21 @@
   }
 
   const discoveredFigurePaths = await discoverFigureFilesFromDirectory();
+  const normalizePath = (path) => {
+    const normalized = String(path || "").trim().toLowerCase();
+    return normalized.startsWith("./") ? normalized : `./${normalized.replace(/^\/+/, "")}`;
+  };
   const knownFigurePaths = new Set(
     [...figureCatalog, ...heraldicFigureCatalog]
       .filter((f) => f.kind === "external_svg" && f.src)
-      .map((f) => f.src)
+      .map((f) => normalizePath(f.src))
   );
+
   const autoDetectedFigures = discoveredFigurePaths
-    .filter((src) => !knownFigurePaths.has(src))
-    .map((src) => ({
-      group: "Гербовые (автообнаружение)",
-      id: `auto_${src.split("/").pop().replace(/[^a-z0-9]+/gi, "_").toLowerCase()}`,
+    .filter((src) => !knownFigurePaths.has(normalizePath(src)))
+    .map((src, idx) => ({
+      group: "Гербовые",
+      id: `auto_${idx}_${src.split("/").pop().replace(/[^a-z0-9]+/gi, "_").toLowerCase()}`,
       name: fileNameToTitle(src),
       kind: "external_svg",
       src,
@@ -667,7 +711,7 @@
   function getFigureClass(fig) {
     if (!fig) return "simple";
     if (fig.group === "Почётные") return "honorable";
-    if (fig.group === "Гербовые") return "heraldic";
+    if (fig.group === "Гербовые" || fig.kind === "external_svg") return "heraldic";
     return "simple";
   }
 
