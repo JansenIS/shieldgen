@@ -425,6 +425,7 @@
         <button class="primary" id="addFigure">Добавить фигуру</button>
         <button class="ghost" id="uploadFigure">Загрузить SVG</button>
         <input type="file" id="uploadFigureInput" accept=".svg,image/svg+xml" style="display:none" />
+        <button class="ghost" id="randomGenerate">Сгенерировать случайный герб</button>
         <button class="ghost" id="reset">Сброс</button>
       </div>
 
@@ -659,6 +660,7 @@
   const uploadFigureInput = el("uploadFigureInput");
 
   const externalSvgCache = new Map();
+  const randomGenerateBtn = el("randomGenerate");
   const resetBtn = el("reset");
   const layersBox = el("layers");
   const svgBox = el("svgBox");
@@ -2301,6 +2303,152 @@
     rankPaletteBox.appendChild(note);
   }
 
+
+  const heraldicMetals = ["#FFBB06", "#F4C551", "#FFFFFF", "#B4BEBF", "#CACACC"];
+  const heraldicColors = ["#0000FE", "#06186E", "#FE0000", "#860000", "#00B357", "#015601", "#890098", "#BF285B", "#000000", "#5E3306"];
+
+  const randomSchemePool = [
+    { fieldA: "#06186E", fieldB: "#FFBB06", chargeMain: "#FFFFFF", chargeAccent: "#FE0000", stroke: "#0b0d12" },
+    { fieldA: "#FE0000", fieldB: "#FFFFFF", chargeMain: "#000000", chargeAccent: "#FFBB06", stroke: "#0b0d12" },
+    { fieldA: "#015601", fieldB: "#FFFFFF", chargeMain: "#FFBB06", chargeAccent: "#860000", stroke: "#0b0d12" },
+    { fieldA: "#000000", fieldB: "#FFFFFF", chargeMain: "#FFBB06", chargeAccent: "#890098", stroke: "#000000" },
+    { fieldA: "#06186E", fieldB: "#FFFFFF", chargeMain: "#FFBB06", chargeAccent: "#BF285B", stroke: "#000000" },
+    { fieldA: "#5E3306", fieldB: "#F4C551", chargeMain: "#FFFFFF", chargeAccent: "#860000", stroke: "#0b0d12" }
+  ];
+
+  function pickRandom(arr) {
+    if (!arr || !arr.length) return null;
+    return arr[Math.floor(Math.random() * arr.length)];
+  }
+
+  function pickDistinctColor(pool, excluded = []) {
+    const available = pool.filter((c) => !excluded.includes(c));
+    return pickRandom(available.length ? available : pool);
+  }
+
+  function createLayerFromFigure(fig, color, presetId = "center", opacity = 1) {
+    if (!fig) return null;
+    const layer = {
+      id: uid(),
+      fig,
+      color: normalizePaletteColor(color),
+      opacity,
+      x: fig.defaults?.x ?? 0,
+      y: fig.defaults?.y ?? 0,
+      ...JSON.parse(JSON.stringify(fig.defaults || {}))
+    };
+
+    if (fig.kind === "external_svg") {
+      const fitScale = getExternalFigureFitScale(fig);
+      const initialScale = layer.s ?? 0.52;
+      layer.s = Math.min(initialScale, fitScale);
+    }
+
+    if (canCenterPreset(fig)) {
+      applyCenterPresetToLayer(layer, presetId);
+    }
+
+    return layer;
+  }
+
+  function buildRandomCoat() {
+    const rule = getRankRule();
+    const scheme = pickRandom(randomSchemePool);
+    const maxColors = rule.maxColors || 4;
+
+    const chosenColors = [scheme.fieldA, scheme.fieldB, scheme.chargeMain, scheme.chargeAccent]
+      .map(normalizePaletteColor)
+      .filter((c, idx, arr) => arr.indexOf(c) === idx)
+      .slice(0, maxColors);
+
+    while (chosenColors.length < Math.min(maxColors, 3)) {
+      const source = chosenColors.some((c) => heraldicMetals.includes(c)) ? heraldicColors : heraldicMetals;
+      const next = pickDistinctColor(source, chosenColors);
+      if (next) chosenColors.push(next);
+      else break;
+    }
+
+    state.allowedColors = chosenColors.slice(0, maxColors);
+
+    const backgrounds = state.allowedColors.filter((c) => heraldicColors.includes(c));
+    const metals = state.allowedColors.filter((c) => heraldicMetals.includes(c));
+    const fieldA = backgrounds[0] || state.allowedColors[0] || "#06186E";
+    const fieldB = metals[0] || pickDistinctColor(state.allowedColors, [fieldA]) || "#FFFFFF";
+    const chargeMain = pickDistinctColor(state.allowedColors, [fieldA]) || fieldB;
+    const chargeAccent = pickDistinctColor(state.allowedColors, [fieldA, chargeMain]) || fieldB;
+
+    state.shieldShape = pickRandom(shieldShapes)?.id || state.shieldShape;
+    state.strokeColor = scheme.stroke;
+    state.strokeWidth = 5 + Math.floor(Math.random() * 4);
+
+    const modePool = maxColors <= 2
+      ? ["solid", "per_fess", "per_pale"]
+      : ["solid", "per_fess", "per_pale", "quarterly", "pale_thirds"];
+    state.field.mode = pickRandom(modePool) || "solid";
+    state.field.patternSize = 40 + Math.floor(Math.random() * 45);
+    ensureFieldSegmentsCount();
+
+    const preferredPattern = Math.random() < 0.75 ? "solid" : pickRandom(["barry", "paly", "checky"]);
+    state.field.segments = state.field.segments.map((_, idx) => ({
+      pattern: preferredPattern,
+      a: idx % 2 === 0 ? fieldA : fieldB,
+      b: idx % 2 === 0 ? fieldB : fieldA
+    }));
+
+    const fullCatalog = getFullFigureCatalog();
+    const pickForClass = (cls) => fullCatalog.filter((f) => getFigureClass(f) === cls);
+    const layers = [];
+
+    const heraldicLimit = rule.limits.heraldic === null ? 2 : rule.limits.heraldic;
+    const honorableLimit = rule.limits.honorable === null ? 2 : rule.limits.honorable;
+    const simpleLimit = rule.limits.simple === null ? 2 : rule.limits.simple;
+
+    if (heraldicLimit > 0) {
+      const fig = pickRandom(pickForClass("heraldic"));
+      const layer = createLayerFromFigure(fig, chargeMain, "center", 1);
+      if (layer) {
+        layer.fitScale = clamp((layer.fitScale ?? 1) * 0.92, 0.16, 1.2);
+        layers.push(layer);
+      }
+    }
+
+    if (honorableLimit > 0 && Math.random() < 0.85) {
+      const honorableIds = ["chief", "fess", "pale", "bend", "chevron", "cross", "saltire", "base"];
+      const honorablePool = pickForClass("honorable").filter((f) => honorableIds.includes(f.id));
+      const fig = pickRandom(honorablePool.length ? honorablePool : pickForClass("honorable"));
+      const layer = createLayerFromFigure(fig, chargeAccent, "center", 0.95);
+      if (layer) layers.unshift(layer);
+    }
+
+    if (simpleLimit > 0 && layers.length < 3 && Math.random() < 0.55) {
+      const simpleIds = ["roundel", "lozenge", "inescutcheon", "canton", "annulet"];
+      const simplePool = pickForClass("simple").filter((f) => simpleIds.includes(f.id));
+      const fig = pickRandom(simplePool.length ? simplePool : pickForClass("simple"));
+      const preset = fig?.id === "canton" ? "quarter_lu" : "center";
+      const layer = createLayerFromFigure(fig, pickDistinctColor(state.allowedColors, [fieldA, chargeMain]), preset, 0.95);
+      if (layer) layers.push(layer);
+    }
+
+    if (!layers.length) {
+      const fallbackFig = pickRandom(pickForClass("honorable")) || figureCatalog.find((f) => f.id === "cross");
+      const fallbackLayer = createLayerFromFigure(fallbackFig, chargeMain, "center", 1);
+      if (fallbackLayer) layers.push(fallbackLayer);
+    }
+
+    state.layers = layers;
+    enforcePaletteRestrictions();
+
+    shieldShapeSel.value = state.shieldShape;
+    strokeColorInp.value = state.strokeColor;
+    strokeWidthInp.value = state.strokeWidth;
+    fieldModeSel.value = state.field.mode;
+    patternSizeInp.value = state.field.patternSize;
+
+    renderRankUI();
+    renderFieldUI();
+    render();
+  }
+
   // ====== Modal-like prompt for adding figure ======
   function addFigureFlow() {
     const overlay = document.createElement("div");
@@ -2693,6 +2841,7 @@
     };
 
     addFigureBtn.onclick = addFigureFlow;
+    randomGenerateBtn.onclick = buildRandomCoat;
     uploadFigureBtn.onclick = () => uploadFigureInput.click();
     uploadFigureInput.onchange = async (evt) => {
       const file = evt.target.files?.[0];

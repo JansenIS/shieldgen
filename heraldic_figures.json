@@ -1222,5 +1222,17 @@
       "y": 0.02,
       "s": 0.52
     }
+  },
+  {
+    "group": "Гербовые",
+    "id": "heraldic_fundatoria",
+    "name": "Fundatoria",
+    "kind": "external_svg",
+    "src": "./figures/fundatoria.svg",
+    "defaults": {
+      "x": 0,
+      "y": 0.02,
+      "s": 0.52
+    }
   }
 ]
