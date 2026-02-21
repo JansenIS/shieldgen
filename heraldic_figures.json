@@ -1126,5 +1126,17 @@
       "y": 0.02,
       "s": 0.52
     }
+  },
+  {
+    "group": "Гербовые",
+    "id": "heraldic_raindar",
+    "name": "Raindar",
+    "kind": "external_svg",
+    "src": "./figures/Raindar.svg",
+    "defaults": {
+      "x": 0,
+      "y": 0.02,
+      "s": 0.52
+    }
   }
 ]

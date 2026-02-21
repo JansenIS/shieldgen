@@ -696,6 +696,48 @@
     return map;
   }
 
+  function inlineExternalSvgClassPaint(svgRoot) {
+    if (!svgRoot) return;
+    const cssPaintByClass = new Map();
+    const styleNodes = svgRoot.querySelectorAll("style");
+
+    styleNodes.forEach((styleNode) => {
+      const css = styleNode.textContent || "";
+      const classRuleRe = /\.([_a-zA-Z][_a-zA-Z0-9-]*)\s*\{([^}]*)\}/g;
+      let match;
+      while ((match = classRuleRe.exec(css)) !== null) {
+        const className = match[1];
+        const decl = match[2];
+        const props = new Map();
+        decl.split(";").map((part) => part.trim()).filter(Boolean).forEach((part) => {
+          const idx = part.indexOf(":");
+          if (idx < 0) return;
+          const key = part.slice(0, idx).trim().toLowerCase();
+          const value = part.slice(idx + 1).trim();
+          if (["fill", "stroke", "fill-opacity", "stroke-opacity", "opacity"].includes(key)) {
+            props.set(key, value);
+          }
+        });
+        if (props.size) cssPaintByClass.set(className, props);
+      }
+    });
+
+    if (!cssPaintByClass.size) return;
+
+    svgRoot.querySelectorAll("*").forEach((node) => {
+      if (!node.classList || !node.classList.length) return;
+      node.classList.forEach((className) => {
+        const props = cssPaintByClass.get(className);
+        if (!props) return;
+        const styleMap = parseInlineSvgStyle(node);
+        props.forEach((value, key) => {
+          if (node.hasAttribute(key) || styleMap.has(key)) return;
+          node.setAttribute(key, value);
+        });
+      });
+    });
+  }
+
   function parseSvgColor(value) {
     if (!value) return null;
     const normalized = value.trim().toLowerCase();
@@ -1545,6 +1587,7 @@
             if (!svgEl || svgEl.nodeName.toLowerCase() !== "svg") {
               throw new Error(`Некорректный SVG: ${fig.src}`);
             }
+            inlineExternalSvgClassPaint(svgEl);
             entry.status = "ready";
             entry.svg = svgEl;
             entry.bbox = measureExternalSvgBBox(svgEl);
