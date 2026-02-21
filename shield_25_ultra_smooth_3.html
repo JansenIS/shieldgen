@@ -727,22 +727,16 @@
     const strokeValue = (attrStroke ?? styleStroke ?? "").toLowerCase();
 
     const preserveBlackFill = isBlackSvgPaint(fillValue);
-    // Не перекрашиваем обводку у элементов, где одновременно есть fill и stroke:
-    // так сохраняется исходный контраст между заливкой и контуром в исходном SVG.
-    // Stroke перекрашиваем только у «линейных» элементов (без заливки).
-    const preserveBlackStroke = isBlackSvgPaint(strokeValue);
+    // Обводку в импортированном SVG принципиально не перекрашиваем.
+    // Иначе в детализированных фигурах (гравировки, контуры, штриховка)
+    // теряется исходный рисунок и контраст.
     const paintFill = ((!hasExplicitFill && !hasExplicitStroke) || (fillValue !== "none")) && !preserveBlackFill;
-    const paintStroke = hasExplicitStroke && strokeValue !== "none" && !paintFill && !preserveBlackStroke;
+    const keepOriginalStroke = hasExplicitStroke && strokeValue !== "none";
 
     if (paintFill || (!preserveBlackFill && hasExplicitFill)) {
       styleMap.delete("fill");
       styleMap.delete("fill-opacity");
     }
-    if (paintStroke || (!preserveBlackStroke && hasExplicitStroke)) {
-      styleMap.delete("stroke");
-      styleMap.delete("stroke-opacity");
-    }
-
     if (paintFill) {
       node.setAttribute("fill", fill);
       node.setAttribute("fill-opacity", opacity);
@@ -754,11 +748,9 @@
       styleMap.set("fill", "none");
     }
 
-    if (paintStroke) {
-      node.setAttribute("stroke", fill);
-      node.setAttribute("stroke-opacity", opacity);
-      styleMap.set("stroke", fill);
-      styleMap.set("stroke-opacity", String(opacity));
+    if (keepOriginalStroke) {
+      if (attrStroke != null) styleMap.delete("stroke");
+      if (node.getAttribute("stroke-opacity") != null) styleMap.delete("stroke-opacity");
     }
 
     const nextStyle = [...styleMap.entries()].map(([k, v]) => `${k}:${v}`).join(";");
