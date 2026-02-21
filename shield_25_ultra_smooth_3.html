@@ -1099,14 +1099,43 @@
     return !non.has(layer.fig.kind);
   }
 
+  const centerPresets = [
+    { id: "center", name: "По центру щита", scale: 1, x: 0, y: 0 },
+    { id: "quarter_ru", name: "Правая верхняя четверть", scale: 0.25, x: 0.5, y: -0.5 },
+    { id: "quarter_lu", name: "Левая верхняя четверть", scale: 0.25, x: -0.5, y: -0.5 },
+    { id: "quarter_rd", name: "Правая нижняя четверть", scale: 0.25, x: 0.5, y: 0.5 },
+    { id: "quarter_ld", name: "Левая нижняя четверть", scale: 0.25, x: -0.5, y: 0.5 },
+    { id: "half_r", name: "Правая половина", scale: 0.5, x: 0.5, y: 0 },
+    { id: "half_l", name: "Левая половина", scale: 0.5, x: -0.5, y: 0 },
+    { id: "half_u", name: "Верхняя половина", scale: 0.5, x: 0, y: -0.5 },
+    { id: "half_d", name: "Нижняя половина", scale: 0.5, x: 0, y: 0.5 }
+  ];
+
+  function canCenterPreset(fig) {
+    if (!fig) return false;
+    return fig.group === "Простые" || fig.group === "Гербовые";
+  }
+
+  function applyCenterPresetToLayer(layer, presetId) {
+    const preset = centerPresets.find((p) => p.id === presetId) || centerPresets[0];
+    layer.x = clamp(preset.x, -0.65, 0.65);
+    layer.y = clamp(preset.y, -0.65, 0.65);
+    layer.fitScale = preset.scale;
+  }
+
+  function getLayerTransform(layer) {
+    const dx = (layer.x ?? 0) * (VB_W/2);
+    const dy = (layer.y ?? 0) * (VB_H/2);
+    const k = clamp(layer.fitScale ?? 1, 0.05, 2);
+    return `translate(${dx} ${dy}) translate(${VB_W/2} ${VB_H/2}) scale(${k}) translate(${-VB_W/2} ${-VB_H/2})`;
+  }
+
   function applyLayerTransform(layerId, svgEl) {
     const layer = state.layers.find(l => l.id === layerId);
     if (!layer) return;
     const g = svgEl.querySelector(`#layer_${CSS.escape(layerId)}`);
     if (!g) return;
-    const dx = (layer.x ?? 0) * (VB_W/2);
-    const dy = (layer.y ?? 0) * (VB_H/2);
-    g.setAttribute("transform", `translate(${dx} ${dy})`);
+    g.setAttribute("transform", getLayerTransform(layer));
   }
 
   function startDrag(evt, layerId) {
@@ -1182,9 +1211,7 @@
     if (clipId) attrs["clip-path"] = `url(#${clipId})`;
     const g = makeSVG("g", attrs);
 
-    const dx = (layer.x ?? 0) * (VB_W/2);
-    const dy = (layer.y ?? 0) * (VB_H/2);
-    g.setAttribute("transform", `translate(${dx} ${dy})`);
+    g.setAttribute("transform", getLayerTransform(layer));
 
     const fill = layer.color || "#FF7F00";
     const opacity = clamp(layer.opacity ?? 1, 0, 1);
@@ -1789,6 +1816,40 @@
       body.appendChild(xWrap);
       body.appendChild(yWrap);
 
+      if (canCenterPreset(layer.fig)) {
+        const centerWrap = document.createElement("div");
+        centerWrap.className = "full";
+        centerWrap.innerHTML = `<label>Отцентровать</label>`;
+
+        const row = document.createElement("div");
+        row.style.display = "flex";
+        row.style.gap = "8px";
+        row.style.alignItems = "center";
+
+        const sel = document.createElement("select");
+        sel.style.flex = "1";
+        centerPresets.forEach((preset) => {
+          const o = document.createElement("option");
+          o.value = preset.id;
+          o.textContent = preset.name;
+          sel.appendChild(o);
+        });
+
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "ghost";
+        btn.textContent = "Отцентровать";
+        btn.onclick = () => {
+          applyCenterPresetToLayer(layer, sel.value);
+          render();
+        };
+
+        row.appendChild(sel);
+        row.appendChild(btn);
+        centerWrap.appendChild(row);
+        body.appendChild(centerWrap);
+      }
+
       const params = buildParamControls(layer);
       params.forEach(node => body.appendChild(node));
 
@@ -2193,7 +2254,31 @@
     }
 
     let selectedColor = "#FF7F00";
+    let selectedPresetId = "center";
     const colorSel = createPalettePicker(selectedColor, (value) => { selectedColor = value; renderFigurePreview(); }, { allowedColors: getRestrictionSet() });
+
+    const centerWrap = document.createElement("div");
+    centerWrap.style.marginTop = "10px";
+    centerWrap.innerHTML = `<label>Отцентровать</label>`;
+
+    const centerSel = document.createElement("select");
+    centerSel.style.width = "100%";
+    centerPresets.forEach((preset) => {
+      const o = document.createElement("option");
+      o.value = preset.id;
+      o.textContent = preset.name;
+      centerSel.appendChild(o);
+    });
+    centerSel.value = selectedPresetId;
+    centerSel.onchange = () => { selectedPresetId = centerSel.value; };
+    centerWrap.appendChild(centerSel);
+
+    function refreshCenterPresetUI() {
+      const fig = fullFigureCatalog.find((f) => f.id === figSel.value);
+      const allowed = canCenterPreset(fig);
+      centerWrap.style.display = allowed ? "block" : "none";
+      centerSel.disabled = !allowed;
+    }
 
     const note = document.createElement("div");
     note.className = "smallnote";
@@ -2204,11 +2289,13 @@
     left.appendChild(figSel);
     left.appendChild(previewGrid);
 
-    figSel.addEventListener("change", renderFigurePreview);
+    figSel.addEventListener("change", () => { renderFigurePreview(); refreshCenterPresetUI(); });
     renderFigurePreview();
+    refreshCenterPresetUI();
 
     right.innerHTML = `<label>Цвет фигуры</label>`;
     right.appendChild(colorSel);
+    right.appendChild(centerWrap);
 
     wrap.appendChild(left);
     wrap.appendChild(right);
@@ -2245,6 +2332,10 @@
         const fitScale = getExternalFigureFitScale(fig);
         const initialScale = layer.s ?? 0.52;
         layer.s = Math.min(initialScale, fitScale);
+      }
+
+      if (canCenterPreset(fig)) {
+        applyCenterPresetToLayer(layer, selectedPresetId);
       }
 
       state.layers.push(layer);
