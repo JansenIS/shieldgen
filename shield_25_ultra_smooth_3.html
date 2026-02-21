@@ -2239,6 +2239,7 @@
               if (!svgEl || svgEl.nodeName.toLowerCase() !== "svg") {
                 throw new Error(`Некорректный SVG: ${fig.src}`);
               }
+              inlineExternalSvgClassPaint(svgEl);
               entry.status = "ready";
               entry.svg = svgEl;
               entry.bbox = measureExternalSvgBBox(svgEl);
