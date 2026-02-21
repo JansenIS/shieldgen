@@ -423,6 +423,8 @@
 
       <div class="btnrow" style="margin-top:10px">
         <button class="primary" id="addFigure">Добавить фигуру</button>
+        <button class="ghost" id="uploadFigure">Загрузить SVG</button>
+        <input type="file" id="uploadFigureInput" accept=".svg,image/svg+xml" style="display:none" />
         <button class="ghost" id="reset">Сброс</button>
       </div>
 
@@ -485,6 +487,135 @@
     loadJSON("./heraldic_figures.json")
   ]);
 
+  async function discoverFigureFilesFromDirectory() {
+    const cacheBust = Date.now();
+    const candidates = ["./figures/", "./figures", "./figures/index.html", "./figures/index.json"];
+
+    const normalizeFigurePath = (href) => {
+      if (!href) return null;
+      const clean = href.split("?")[0].split("#")[0].trim();
+      if (!clean) return null;
+      const lower = clean.toLowerCase();
+      if (!lower.endsWith(".svg")) return null;
+
+      const filePart = clean.split("/").pop();
+      if (!filePart) return null;
+
+      let filename;
+      try {
+        filename = decodeURIComponent(filePart);
+      } catch (_) {
+        filename = filePart;
+      }
+      filename = filename.replace(/&#39;/g, "'").replace(/&apos;/g, "'");
+      return `./figures/${filename}`;
+    };
+
+    const extractSvgPathsFromText = (text) => {
+      const found = new Set();
+
+      try {
+        const doc = new DOMParser().parseFromString(text, "text/html");
+        doc.querySelectorAll("a[href]").forEach((a) => {
+          const path = normalizeFigurePath(a.getAttribute("href"));
+          if (path) found.add(path);
+        });
+      } catch (_) {
+        // ignore parse errors, regex fallback below
+      }
+
+      const regexMatches = text.match(/[^"\s<>]+\.svg(?:\?[^"\s<>]*)?/gi) || [];
+      regexMatches.forEach((raw) => {
+        const path = normalizeFigurePath(raw);
+        if (path) found.add(path);
+      });
+
+      return [...found];
+    };
+
+    const extractSvgPathsFromJson = (data) => {
+      const found = new Set();
+      const stack = [data];
+      while (stack.length) {
+        const item = stack.pop();
+        if (!item) continue;
+        if (Array.isArray(item)) {
+          item.forEach((x) => stack.push(x));
+          continue;
+        }
+        if (typeof item === "object") {
+          Object.values(item).forEach((x) => stack.push(x));
+          continue;
+        }
+        if (typeof item === "string") {
+          const path = normalizeFigurePath(item);
+          if (path) found.add(path);
+        }
+      }
+      return [...found];
+    };
+
+    for (const url of candidates) {
+      const withBust = url.includes("?") ? `${url}&_=${cacheBust}` : `${url}?_=${cacheBust}`;
+      try {
+        const res = await fetch(withBust, { cache: "no-store" });
+        if (!res.ok) continue;
+
+        const contentType = (res.headers.get("content-type") || "").toLowerCase();
+        if (contentType.includes("application/json") || withBust.endsWith(".json")) {
+          try {
+            const data = await res.json();
+            const paths = extractSvgPathsFromJson(data);
+            if (paths.length) return paths;
+            continue;
+          } catch (_) {
+            // fall through to text parse
+          }
+        }
+
+        const text = await res.text();
+        const paths = extractSvgPathsFromText(text);
+        if (paths.length) return paths;
+      } catch (_) {
+        // fallback to next candidate
+      }
+    }
+
+    return [];
+  }
+
+  function fileNameToTitle(path) {
+    const filename = path.split("/").pop()?.replace(/\.svg$/i, "") || "Фигура";
+    return decodeURIComponent(filename)
+      .replace(/[_-]+/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+  }
+
+  const normalizePath = (path) => {
+    const normalized = String(path || "").trim().toLowerCase();
+    return normalized.startsWith("./") ? normalized : `./${normalized.replace(/^\/+/, "")}`;
+  };
+
+  const uploadedFigureCatalog = [];
+  const discoveredFigurePaths = await discoverFigureFilesFromDirectory();
+  const knownFigurePaths = new Set(
+    [...figureCatalog, ...heraldicFigureCatalog]
+      .filter((f) => f.kind === "external_svg" && f.src)
+      .map((f) => normalizePath(f.src))
+  );
+
+  const autoDetectedFigures = discoveredFigurePaths
+    .filter((src) => !knownFigurePaths.has(normalizePath(src)))
+    .map((src, idx) => ({
+      group: "Гербовые",
+      id: `auto_${idx}_${src.split("/").pop().replace(/[^a-z0-9]+/gi, "_").toLowerCase()}`,
+      name: fileNameToTitle(src),
+      kind: "external_svg",
+      src,
+      defaults: { s: 0.52, x: 0, y: 0 }
+    }));
+
   const heraldicPalette = [
     "#FFBB06", "#FFF500", "#F4C551", "#FFFFFF", "#B4BEBF",
     "#CACACC", "#5E3306", "#C07F55", "#6E2202", "#FE0000",
@@ -524,6 +655,8 @@
   const fieldSegmentsBox = el("fieldSegments");
 
   const addFigureBtn = el("addFigure");
+  const uploadFigureBtn = el("uploadFigure");
+  const uploadFigureInput = el("uploadFigureInput");
 
   const externalSvgCache = new Map();
   const resetBtn = el("reset");
@@ -532,7 +665,9 @@
   const downloadSVGBtn = el("downloadSVG");
   const downloadPNGBtn = el("downloadPNG");
 
-  const fullFigureCatalog = [...figureCatalog, ...heraldicFigureCatalog];
+  function getFullFigureCatalog() {
+    return [...figureCatalog, ...heraldicFigureCatalog, ...autoDetectedFigures, ...uploadedFigureCatalog];
+  }
 
   const rankRules = [
     { id: "free", name: "Свободное редактирование", maxColors: null, limits: { honorable: null, simple: null, heraldic: null }, hint: "Без ограничений, как сейчас." },
@@ -566,6 +701,43 @@
   const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
   const uid = () => Math.random().toString(16).slice(2) + Date.now().toString(16);
 
+
+  function getExternalFigureCacheKey(fig) {
+    if (!fig) return null;
+    return fig.cacheKey || fig.src || null;
+  }
+
+  function ensureExternalSvgEntry(fig, onReady) {
+    const key = getExternalFigureCacheKey(fig);
+    if (!key) return null;
+
+    let entry = externalSvgCache.get(key);
+    if (!entry) {
+      entry = { status: "loading", svg: null, bbox: null, sourceViewBox: null };
+      const loadPromise = fig.svgText ? Promise.resolve(fig.svgText) : loadSVG(fig.src);
+      entry.promise = loadPromise
+        .then((svgText) => {
+          const doc = new DOMParser().parseFromString(svgText, "image/svg+xml");
+          const svgEl = doc.documentElement;
+          if (!svgEl || svgEl.nodeName.toLowerCase() !== "svg") {
+            throw new Error(`Некорректный SVG: ${fig.src || fig.name || key}`);
+          }
+          inlineExternalSvgClassPaint(svgEl);
+          entry.status = "ready";
+          entry.svg = svgEl;
+          entry.bbox = measureExternalSvgBBox(svgEl);
+          entry.sourceViewBox = parseSvgViewBox(svgEl);
+          if (typeof onReady === "function") onReady();
+        })
+        .catch((err) => {
+          console.error(err);
+          entry.status = "error";
+        });
+      externalSvgCache.set(key, entry);
+    }
+    return entry;
+  }
+
   function normalizePaletteColor(value) {
     const hex = String(value || "").trim().toUpperCase();
     return heraldicPalette.includes(hex) ? hex : heraldicPalette[0];
@@ -579,7 +751,7 @@
   function getFigureClass(fig) {
     if (!fig) return "simple";
     if (fig.group === "Почётные") return "honorable";
-    if (fig.group === "Гербовые") return "heraldic";
+    if (fig.group === "Гербовые" || fig.kind === "external_svg") return "heraldic";
     return "simple";
   }
 
@@ -1605,29 +1777,7 @@
       const w = VB_W * s;
       const h = VB_H * s;
 
-      let entry = externalSvgCache.get(fig.src);
-      if (!entry) {
-        entry = { status: "loading", svg: null, bbox: null, sourceViewBox: null };
-        entry.promise = loadSVG(fig.src)
-          .then((svgText) => {
-            const doc = new DOMParser().parseFromString(svgText, "image/svg+xml");
-            const svgEl = doc.documentElement;
-            if (!svgEl || svgEl.nodeName.toLowerCase() !== "svg") {
-              throw new Error(`Некорректный SVG: ${fig.src}`);
-            }
-            inlineExternalSvgClassPaint(svgEl);
-            entry.status = "ready";
-            entry.svg = svgEl;
-            entry.bbox = measureExternalSvgBBox(svgEl);
-            entry.sourceViewBox = parseSvgViewBox(svgEl);
-            render();
-          })
-          .catch((err) => {
-            console.error(err);
-            entry.status = "error";
-          });
-        externalSvgCache.set(fig.src, entry);
-      }
+      const entry = ensureExternalSvgEntry(fig, render);
 
       if (entry.status === "ready" && entry.svg) {
         const svg = entry.svg.cloneNode(true);
@@ -1647,7 +1797,7 @@
         g.appendChild(svg);
       } else {
         const image = makeSVG("image", {
-          href: fig.src,
+          href: fig.previewSrc || fig.src,
           x: cx0 - w / 2,
           y: cy0 - h / 2,
           width: w,
@@ -1691,7 +1841,7 @@
     tempSvg.remove();
 
     const shieldFit = Math.min((shieldBox.width || VB_W) / VB_W, (shieldBox.height || VB_H) / VB_H);
-    const entry = fig && fig.src ? externalSvgCache.get(fig.src) : null;
+    const entry = fig ? externalSvgCache.get(getExternalFigureCacheKey(fig)) : null;
     const bbox = pickExternalSvgBox(entry);
     if (!bbox || !(bbox.width > 0 && bbox.height > 0)) {
       return clamp(shieldFit * 0.9, 0.12, 1);
@@ -2229,30 +2379,7 @@
       svg.appendChild(defs);
 
       if (fig.kind === "external_svg") {
-        let entry = externalSvgCache.get(fig.src);
-        if (!entry) {
-          entry = { status: "loading", svg: null, bbox: null, sourceViewBox: null };
-          entry.promise = loadSVG(fig.src)
-            .then((svgText) => {
-              const doc = new DOMParser().parseFromString(svgText, "image/svg+xml");
-              const svgEl = doc.documentElement;
-              if (!svgEl || svgEl.nodeName.toLowerCase() !== "svg") {
-                throw new Error(`Некорректный SVG: ${fig.src}`);
-              }
-              inlineExternalSvgClassPaint(svgEl);
-              entry.status = "ready";
-              entry.svg = svgEl;
-              entry.bbox = measureExternalSvgBBox(svgEl);
-              entry.sourceViewBox = parseSvgViewBox(svgEl);
-              renderFigurePreview();
-            })
-            .catch((err) => {
-              console.error(err);
-              entry.status = "error";
-            });
-          externalSvgCache.set(fig.src, entry);
-        }
-
+        const entry = ensureExternalSvgEntry(fig, renderFigurePreview);
         if (entry.status === "ready" && entry.svg) {
           const ext = entry.svg.cloneNode(true);
           ext.setAttribute("x", VB_W * 0.08);
@@ -2271,7 +2398,7 @@
           svg.appendChild(g);
         } else {
           const img = document.createElement("img");
-          img.src = fig.src;
+          img.src = fig.previewSrc || fig.src;
           img.alt = fig.name;
           icon.appendChild(img);
           return;
@@ -2287,7 +2414,7 @@
       const selectedId = figSel.value;
       previewGrid.innerHTML = "";
 
-      for (const f of fullFigureCatalog) {
+      for (const f of getFullFigureCatalog()) {
         const btn = document.createElement("button");
         btn.type = "button";
         btn.className = "figurePreviewBtn" + (f.id === selectedId ? " active" : "");
@@ -2314,6 +2441,7 @@
       }
     }
 
+    const fullFigureCatalog = getFullFigureCatalog();
     const groups = [...new Set(fullFigureCatalog.map(f => f.group))];
     for (const g of groups) {
       const og = document.createElement("optgroup");
@@ -2350,7 +2478,7 @@
     centerWrap.appendChild(centerSel);
 
     function refreshCenterPresetUI() {
-      const fig = fullFigureCatalog.find((f) => f.id === figSel.value);
+      const fig = getFullFigureCatalog().find((f) => f.id === figSel.value);
       const allowed = canCenterPreset(fig);
       centerWrap.style.display = allowed ? "block" : "none";
       centerSel.disabled = !allowed;
@@ -2387,7 +2515,7 @@
     ok.textContent = "Добавить";
     ok.onclick = () => {
       const figId = figSel.value;
-      const fig = fullFigureCatalog.find(f => f.id === figId);
+      const fig = getFullFigureCatalog().find(f => f.id === figId);
       if (!fig) return;
       if (!canAddFigureForCurrentRule(fig)) {
         alert("Для выбранного режима достигнут лимит фигур этого типа.");
@@ -2565,6 +2693,26 @@
     };
 
     addFigureBtn.onclick = addFigureFlow;
+    uploadFigureBtn.onclick = () => uploadFigureInput.click();
+    uploadFigureInput.onchange = async (evt) => {
+      const file = evt.target.files?.[0];
+      if (!file) return;
+      const text = await file.text();
+      const id = `upload_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+      const previewSrc = URL.createObjectURL(file);
+      uploadedFigureCatalog.unshift({
+        group: "SVG пользователя",
+        id,
+        name: file.name.replace(/\.svg$/i, "") || "Пользовательский SVG",
+        kind: "external_svg",
+        svgText: text,
+        cacheKey: id,
+        previewSrc,
+        defaults: { s: 0.52, x: 0, y: 0 }
+      });
+      uploadFigureInput.value = "";
+      addFigureFlow();
+    };
 
     resetBtn.onclick = () => {
       state.shieldShape = shieldShapes[0].id;
