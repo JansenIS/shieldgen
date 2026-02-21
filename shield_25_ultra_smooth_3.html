@@ -301,6 +301,61 @@
       cursor:not-allowed;
       filter:saturate(0.3);
     }
+    .figurePreviewGrid{
+      margin-top:10px;
+      max-height:360px;
+      overflow:auto;
+      border:1px solid var(--line);
+      border-radius:10px;
+      padding:8px;
+      display:grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap:8px;
+      background:rgba(12,15,24,.4);
+    }
+    .figurePreviewBtn{
+      display:flex;
+      flex-direction:column;
+      gap:6px;
+      align-items:center;
+      justify-content:flex-start;
+      text-align:center;
+      padding:8px 6px;
+      min-height:108px;
+      border-radius:10px;
+      border:1px solid var(--line);
+      background:rgba(12,15,24,.65);
+      font-size:11px;
+      line-height:1.2;
+    }
+    .figurePreviewBtn.active{
+      border-color:#7dd3fc;
+      box-shadow:0 0 0 1px rgba(125,211,252,.3) inset;
+    }
+    .figurePreviewBtn:disabled{
+      opacity:.45;
+      cursor:not-allowed;
+    }
+    .figurePreviewIcon{
+      width:52px;
+      height:52px;
+      border-radius:8px;
+      border:1px solid rgba(125,211,252,.2);
+      background:rgba(255,255,255,.05);
+      display:flex;
+      align-items:center;
+      justify-content:center;
+      overflow:hidden;
+      font-size:10px;
+      color:var(--muted);
+    }
+    .figurePreviewIcon img{
+      width:100%;
+      height:100%;
+      object-fit:contain;
+      display:block;
+      filter:brightness(0) saturate(100%) invert(87%) sepia(9%) saturate(268%) hue-rotate(186deg) brightness(99%) contrast(92%);
+    }
   </style>
 </head>
 <body>
@@ -418,9 +473,10 @@
     return res.json();
   }
 
-  const [shieldShapes, figureCatalog] = await Promise.all([
+  const [shieldShapes, figureCatalog, heraldicFigureCatalog] = await Promise.all([
     loadJSON("./shield_shapes.json"),
-    loadJSON("./figures.json")
+    loadJSON("./figures.json"),
+    loadJSON("./heraldic_figures.json")
   ]);
 
   const heraldicPalette = [
@@ -468,14 +524,7 @@
   const downloadSVGBtn = el("downloadSVG");
   const downloadPNGBtn = el("downloadPNG");
 
-
-  const heraldicPlaceholderCatalog = [
-    { group: "Гербовые", id: "heraldic_animal", name: "Животное (заглушка)", kind: "heraldic_placeholder", defaults: { x: 0, y: 0 } },
-    { group: "Гербовые", id: "heraldic_building", name: "Здание (заглушка)", kind: "heraldic_placeholder", defaults: { x: 0, y: 0 } },
-    { group: "Гербовые", id: "heraldic_other", name: "Иная гербовая фигура (заглушка)", kind: "heraldic_placeholder", defaults: { x: 0, y: 0 } }
-  ];
-
-  const fullFigureCatalog = [...figureCatalog, ...heraldicPlaceholderCatalog];
+  const fullFigureCatalog = [...figureCatalog, ...heraldicFigureCatalog];
 
   const rankRules = [
     { id: "free", name: "Свободное редактирование", maxColors: null, limits: { honorable: null, simple: null, heraldic: null }, hint: "Без ограничений, как сейчас." },
@@ -1265,6 +1314,23 @@
       return g;
     }
 
+    if (kind === "external_svg") {
+      const s = clamp(layer.s ?? 0.52, 0.12, 1.5);
+      const w = VB_W * s;
+      const h = VB_H * s;
+      const image = makeSVG("image", {
+        href: fig.src,
+        x: cx0 - w / 2,
+        y: cy0 - h / 2,
+        width: w,
+        height: h,
+        preserveAspectRatio: "xMidYMid meet",
+        opacity
+      });
+      g.appendChild(image);
+      return g;
+    }
+
     if (kind === "heraldic_placeholder") {
       return g;
     }
@@ -1547,6 +1613,9 @@
         break;
       case "gyronny4":
         break;
+      case "external_svg":
+        nodes.push(mkRange("Размер (s)", "s", 0.12, 1.5, 0.01));
+        break;
       default:
         break;
     }
@@ -1717,6 +1786,47 @@
     const figSel = document.createElement("select");
     figSel.style.width = "100%";
 
+    const previewGrid = document.createElement("div");
+    previewGrid.className = "figurePreviewGrid";
+
+    function renderFigurePreview() {
+      const selectedId = figSel.value;
+      previewGrid.innerHTML = "";
+
+      for (const f of fullFigureCatalog) {
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "figurePreviewBtn" + (f.id === selectedId ? " active" : "");
+
+        const canAdd = canAddFigureForCurrentRule(f);
+        btn.disabled = !canAdd;
+        btn.title = canAdd ? f.name : `${f.name} (лимит режима)`;
+
+        const icon = document.createElement("div");
+        icon.className = "figurePreviewIcon";
+        if (f.kind === "external_svg") {
+          const img = document.createElement("img");
+          img.src = f.src;
+          img.alt = f.name;
+          icon.appendChild(img);
+        } else {
+          icon.textContent = "SVG";
+        }
+
+        const name = document.createElement("div");
+        name.textContent = f.name;
+
+        btn.appendChild(icon);
+        btn.appendChild(name);
+        btn.onclick = () => {
+          if (!canAdd) return;
+          figSel.value = f.id;
+          renderFigurePreview();
+        };
+        previewGrid.appendChild(btn);
+      }
+    }
+
     const groups = [...new Set(fullFigureCatalog.map(f => f.group))];
     for (const g of groups) {
       const og = document.createElement("optgroup");
@@ -1742,6 +1852,10 @@
 
     left.innerHTML = `<label>Тип фигуры</label>`;
     left.appendChild(figSel);
+    left.appendChild(previewGrid);
+
+    figSel.addEventListener("change", renderFigurePreview);
+    renderFigurePreview();
 
     right.innerHTML = `<label>Цвет фигуры</label>`;
     right.appendChild(colorSel);
