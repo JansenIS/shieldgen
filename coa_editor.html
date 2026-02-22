@@ -702,6 +702,10 @@
   // ====== Helpers ======
   const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
   const uid = () => Math.random().toString(16).slice(2) + Date.now().toString(16);
+  const inscriptionFonts = {
+    medieval: '"Cinzel Decorative", "Bookman Old Style", "Palatino Linotype", serif',
+    gothic: '"UnifrakturCook", "Old English Text MT", "Blackletter", serif'
+  };
 
 
   function getExternalFigureCacheKey(fig) {
@@ -1821,6 +1825,64 @@
       return g;
     }
 
+    if (kind === "inscription") {
+      const textValue = String(layer.text ?? "FORTITUDO ET HONOR").trim() || "FORTITUDO ET HONOR";
+      const fontKey = (layer.fontStyle === "gothic") ? "gothic" : "medieval";
+      const fontSize = VB_W * clamp(layer.fontSize ?? 0.085, 0.03, 0.25);
+      const letterSpacing = clamp(layer.letterSpacing ?? 0.02, -0.02, 0.15) * fontSize;
+      const curve = clamp(layer.curve ?? 0, -330, 330);
+      const radius = VB_W * clamp(layer.radius ?? 0.28, 0.08, 0.95);
+
+      const textEl = makeSVG("text", {
+        "font-size": fontSize,
+        "font-family": inscriptionFonts[fontKey],
+        "font-weight": "700",
+        "text-rendering": "geometricPrecision",
+        "letter-spacing": letterSpacing,
+        fill,
+        "fill-opacity": opacity
+      });
+
+      if (Math.abs(curve) < 1) {
+        textEl.setAttribute("x", String(cx0));
+        textEl.setAttribute("y", String(cy0));
+        textEl.setAttribute("text-anchor", "middle");
+        textEl.setAttribute("dominant-baseline", "middle");
+        textEl.textContent = textValue;
+      } else {
+        const arc = Math.abs(curve) * (Math.PI / 180);
+        const startAngle = -arc / 2;
+        const endAngle = arc / 2;
+
+        const x1 = cx0 + Math.cos(startAngle) * radius;
+        const y1 = cy0 + Math.sin(startAngle) * radius;
+        const x2 = cx0 + Math.cos(endAngle) * radius;
+        const y2 = cy0 + Math.sin(endAngle) * radius;
+
+        const largeArc = arc > Math.PI ? 1 : 0;
+        const sweep = curve > 0 ? 1 : 0;
+        const pathId = `textarc_${layer.id}`;
+        const arcPath = makeSVG("path", {
+          id: pathId,
+          d: `M ${x1} ${y1} A ${radius} ${radius} 0 ${largeArc} ${sweep} ${x2} ${y2}`,
+          fill: "none",
+          stroke: "none"
+        });
+        g.appendChild(arcPath);
+
+        const textPath = makeSVG("textPath", {
+          href: `#${pathId}`,
+          startOffset: "50%",
+          "text-anchor": "middle"
+        });
+        textPath.textContent = textValue;
+        textEl.appendChild(textPath);
+      }
+
+      g.appendChild(textEl);
+      return g;
+    }
+
     if (kind === "external_svg") {
       const s = clamp(layer.s ?? 0.52, 0.12, 1.5);
       const w = VB_W * s;
@@ -2151,6 +2213,36 @@
       return w;
     }
 
+    function mkText(labelText, key, placeholder = "") {
+      const w = document.createElement("div");
+      w.className = "full";
+      w.innerHTML = `<label>${labelText}</label>`;
+      const input = document.createElement("input");
+      input.type = "text";
+      input.value = String(layer[key] ?? fig.defaults?.[key] ?? "");
+      input.placeholder = placeholder;
+      input.oninput = () => { layer[key] = input.value; render(); };
+      w.appendChild(input);
+      return w;
+    }
+
+    function mkSelect(labelText, key, options) {
+      const w = document.createElement("div");
+      w.className = "full";
+      w.innerHTML = `<label>${labelText}</label>`;
+      const sel = document.createElement("select");
+      options.forEach((opt) => {
+        const o = document.createElement("option");
+        o.value = opt.value;
+        o.textContent = opt.label;
+        sel.appendChild(o);
+      });
+      sel.value = String(layer[key] ?? fig.defaults?.[key] ?? options[0]?.value ?? "");
+      sel.onchange = () => { layer[key] = sel.value; render(); };
+      w.appendChild(sel);
+      return w;
+    }
+
     switch (fig.kind) {
       case "rect_band":
         nodes.push(mkRange("Ширина (w)", "w", 0.05, 1.3, 0.01));
@@ -2225,6 +2317,17 @@
         break;
       case "external_svg":
         nodes.push(mkRange("Размер (s)", "s", 0.12, 1.5, 0.01));
+        break;
+      case "inscription":
+        nodes.push(mkText("Надпись", "text", "Например: FORTITUDO ET HONOR"));
+        nodes.push(mkSelect("Шрифт", "fontStyle", [
+          { value: "medieval", label: "Средневековый" },
+          { value: "gothic", label: "Готический" }
+        ]));
+        nodes.push(mkRange("Размер шрифта", "fontSize", 0.03, 0.25, 0.005));
+        nodes.push(mkRange("Кривизна по окружности (°)", "curve", -330, 330, 1));
+        nodes.push(mkRange("Радиус окружности", "radius", 0.08, 0.95, 0.01));
+        nodes.push(mkRange("Интервал между буквами", "letterSpacing", -0.02, 0.15, 0.005));
         break;
       default:
         break;

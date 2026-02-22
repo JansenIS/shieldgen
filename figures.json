@@ -259,5 +259,22 @@
       "x": 0,
       "y": 0.05
     }
+  },
+  {
+    "group": "Простые",
+    "id": "inscription",
+    "name": "Надпись (Inscription)",
+    "kind": "inscription",
+    "defaults": {
+      "text": "FORTITUDO ET HONOR",
+      "fontStyle": "medieval",
+      "fontSize": 0.085,
+      "curve": 170,
+      "radius": 0.34,
+      "letterSpacing": 0.02,
+      "x": 0,
+      "y": -0.08,
+      "rot": 0
+    }
   }
 ]
