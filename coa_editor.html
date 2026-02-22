@@ -1053,29 +1053,25 @@
   }
 
   function measureExternalSvgBBox(svgEl) {
-    const tempSvg = makeSVG("svg", { viewBox: "0 0 1 1", width: 1, height: 1 });
-    tempSvg.style.position = "absolute";
-    tempSvg.style.left = "-9999px";
-    tempSvg.style.top = "-9999px";
-    tempSvg.style.visibility = "hidden";
-
-    const wrap = makeSVG("g");
     const probe = svgEl.cloneNode(true);
     probe.removeAttribute("x");
     probe.removeAttribute("y");
-    wrap.appendChild(probe);
-    tempSvg.appendChild(wrap);
-    document.body.appendChild(tempSvg);
+    probe.style.position = "absolute";
+    probe.style.left = "-9999px";
+    probe.style.top = "-9999px";
+    probe.style.visibility = "hidden";
+    probe.style.overflow = "visible";
+    document.body.appendChild(probe);
 
     let bbox = null;
     try {
-      const b = wrap.getBBox();
+      const b = probe.getBBox();
       if (b && b.width > 0 && b.height > 0) {
         bbox = { x: b.x, y: b.y, width: b.width, height: b.height };
       }
     } catch (_) {}
 
-    tempSvg.remove();
+    probe.remove();
     return bbox;
   }
 
