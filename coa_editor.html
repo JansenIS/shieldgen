@@ -1094,6 +1094,30 @@
     const bbox = entry?.bbox;
     const sourceViewBox = entry?.sourceViewBox;
     if (!bbox || !(bbox.width > 0 && bbox.height > 0)) return sourceViewBox || null;
+    if (!sourceViewBox) return bbox;
+
+    const finite = [bbox.x, bbox.y, bbox.width, bbox.height, sourceViewBox.x, sourceViewBox.y, sourceViewBox.width, sourceViewBox.height]
+      .every((n) => Number.isFinite(n));
+    if (!finite) return sourceViewBox;
+
+    // Иногда getBBox() у внешних SVG (особенно с фильтрами/масками) даёт
+    // чрезмерно большой прямоугольник, из-за чего фигура становится почти невидимой.
+    // В таком случае откатываемся к исходному viewBox.
+    if (bbox.width > sourceViewBox.width * 8 || bbox.height > sourceViewBox.height * 8) {
+      return sourceViewBox;
+    }
+
+    const overlapX = Math.max(0, Math.min(bbox.x + bbox.width, sourceViewBox.x + sourceViewBox.width) - Math.max(bbox.x, sourceViewBox.x));
+    const overlapY = Math.max(0, Math.min(bbox.y + bbox.height, sourceViewBox.y + sourceViewBox.height) - Math.max(bbox.y, sourceViewBox.y));
+    const overlapArea = overlapX * overlapY;
+    const bboxArea = bbox.width * bbox.height;
+
+    // Если bbox вообще не пересекается с source viewBox (или пересечение почти нулевое),
+    // считаем его шумом измерения и используем исходную область.
+    if (!(bboxArea > 0) || overlapArea / bboxArea < 0.01) {
+      return sourceViewBox;
+    }
+
     return bbox;
   }
 
