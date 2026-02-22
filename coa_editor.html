@@ -1094,17 +1094,70 @@
     const bbox = entry?.bbox;
     const sourceViewBox = entry?.sourceViewBox;
     if (!bbox || !(bbox.width > 0 && bbox.height > 0)) return sourceViewBox || null;
-    if (!sourceViewBox) return bbox;
+    return bbox;
+  }
 
-    const widthRatio = bbox.width / sourceViewBox.width;
-    const heightRatio = bbox.height / sourceViewBox.height;
-    const suspicious =
-      !Number.isFinite(widthRatio) ||
-      !Number.isFinite(heightRatio) ||
-      widthRatio > 8 || heightRatio > 8 ||
-      widthRatio < 0.125 || heightRatio < 0.125;
+  function getShieldBBox() {
+    const tempSvg = makeSVG("svg", { viewBox: `0 0 ${VB_W} ${VB_H}`, width: 1, height: 1 });
+    tempSvg.style.position = "absolute";
+    tempSvg.style.left = "-9999px";
+    tempSvg.style.top = "-9999px";
+    tempSvg.style.visibility = "hidden";
 
-    return suspicious ? sourceViewBox : bbox;
+    const path = makeSVG("path", { d: getShieldPathD() });
+    tempSvg.appendChild(path);
+    document.body.appendChild(tempSvg);
+
+    let shieldBox;
+    try {
+      shieldBox = path.getBBox();
+    } catch (_) {
+      shieldBox = { x: 0, y: 0, width: VB_W, height: VB_H };
+    }
+
+    tempSvg.remove();
+    return shieldBox;
+  }
+
+  function getLayerMoveLimits(layer) {
+    const fallback = { minX: -0.65, maxX: 0.65, minY: -0.65, maxY: 0.65 };
+    if (!layer || layer.fig?.kind !== "external_svg") return fallback;
+
+    const entry = externalSvgCache.get(getExternalFigureCacheKey(layer.fig));
+    const fitBox = pickExternalSvgBox(entry);
+    if (!fitBox || !(fitBox.width > 0 && fitBox.height > 0)) return fallback;
+
+    const shieldBox = getShieldBBox();
+    if (!(shieldBox.width > 0 && shieldBox.height > 0)) return fallback;
+
+    const s = clamp(layer.s ?? 0.52, 0.12, 1.5);
+    const containerW = VB_W * s;
+    const containerH = VB_H * s;
+    const figureAspect = fitBox.width / fitBox.height;
+    const containerAspect = containerW / containerH;
+
+    let visibleW = containerW;
+    let visibleH = containerH;
+    if (figureAspect >= containerAspect) visibleH = containerW / figureAspect;
+    else visibleW = containerH * figureAspect;
+
+    const halfDx = Math.max(0, (shieldBox.width - visibleW) / 2);
+    const halfDy = Math.max(0, (shieldBox.height - visibleH) / 2);
+    const centerOffsetX = (shieldBox.x + shieldBox.width / 2) - VB_W / 2;
+    const centerOffsetY = (shieldBox.y + shieldBox.height / 2) - VB_H / 2;
+
+    return {
+      minX: clamp((centerOffsetX - halfDx) / (VB_W / 2), -0.65, 0.65),
+      maxX: clamp((centerOffsetX + halfDx) / (VB_W / 2), -0.65, 0.65),
+      minY: clamp((centerOffsetY - halfDy) / (VB_H / 2), -0.65, 0.65),
+      maxY: clamp((centerOffsetY + halfDy) / (VB_H / 2), -0.65, 0.65)
+    };
+  }
+
+  function clampLayerPosition(layer) {
+    const lim = getLayerMoveLimits(layer);
+    layer.x = clamp(layer.x ?? 0, lim.minX, lim.maxX);
+    layer.y = clamp(layer.y ?? 0, lim.minY, lim.maxY);
   }
 
   function getShieldPathD() {
@@ -1362,8 +1415,9 @@
 
   function applyCenterPresetToLayer(layer, presetId) {
     const preset = centerPresets.find((p) => p.id === presetId) || centerPresets[0];
-    layer.x = clamp(preset.x, -0.65, 0.65);
-    layer.y = clamp(preset.y, -0.65, 0.65);
+    const lim = getLayerMoveLimits(layer);
+    layer.x = clamp(preset.x, lim.minX, lim.maxX);
+    layer.y = clamp(preset.y, lim.minY, lim.maxY);
     layer.fitScale = preset.scale;
   }
 
@@ -1371,7 +1425,8 @@
     const dx = (layer.x ?? 0) * (VB_W/2);
     const dy = (layer.y ?? 0) * (VB_H/2);
     const k = clamp(layer.fitScale ?? 1, 0.05, 2);
-    return `translate(${dx} ${dy}) translate(${VB_W/2} ${VB_H/2}) scale(${k}) translate(${-VB_W/2} ${-VB_H/2})`;
+    const rot = layer.rot ?? 0;
+    return `translate(${dx} ${dy}) translate(${VB_W/2} ${VB_H/2}) rotate(${rot}) scale(${k}) translate(${-VB_W/2} ${-VB_H/2})`;
   }
 
   function applyLayerTransform(layerId, svgEl) {
@@ -1426,8 +1481,9 @@
     const nx = drag.startX + dx / (VB_W/2);
     const ny = drag.startY + dy / (VB_H/2);
 
-    layer.x = clamp(nx, -0.65, 0.65);
-    layer.y = clamp(ny, -0.65, 0.65);
+    const lim = getLayerMoveLimits(layer);
+    layer.x = clamp(nx, lim.minX, lim.maxX);
+    layer.y = clamp(ny, lim.minY, lim.maxY);
 
     applyLayerTransform(layerId, svgEl);
   }
@@ -1824,23 +1880,7 @@
   }
 
   function getExternalFigureFitScale(fig) {
-    const tempSvg = makeSVG("svg", { viewBox: `0 0 ${VB_W} ${VB_H}`, width: 1, height: 1 });
-    tempSvg.style.position = "absolute";
-    tempSvg.style.left = "-9999px";
-    tempSvg.style.top = "-9999px";
-    tempSvg.style.visibility = "hidden";
-
-    const path = makeSVG("path", { d: getShieldPathD() });
-    tempSvg.appendChild(path);
-    document.body.appendChild(tempSvg);
-
-    let shieldBox;
-    try {
-      shieldBox = path.getBBox();
-    } catch (_) {
-      shieldBox = { x: 0, y: 0, width: VB_W, height: VB_H };
-    }
-    tempSvg.remove();
+    const shieldBox = getShieldBBox();
 
     const shieldFit = Math.min((shieldBox.width || VB_W) / VB_W, (shieldBox.height || VB_H) / VB_H);
     const entry = fig ? externalSvgCache.get(getExternalFigureCacheKey(fig)) : null;
@@ -1973,8 +2013,24 @@
         render();
       };
 
+      const copy = document.createElement("button");
+      copy.textContent = "Копия";
+      copy.className = "ghost";
+      copy.onclick = () => {
+        const cloned = {
+          ...JSON.parse(JSON.stringify(layer)),
+          id: uid(),
+          fig: layer.fig,
+          title: layer.title ? `${layer.title} (копия)` : ""
+        };
+        clampLayerPosition(cloned);
+        state.layers.splice(idx + 1, 0, cloned);
+        render();
+      };
+
       actions.appendChild(up);
       actions.appendChild(down);
+      actions.appendChild(copy);
       actions.appendChild(del);
 
       top.appendChild(left);
@@ -2017,22 +2073,23 @@
       xWrap.innerHTML = `<label>Смещение X</label>`;
       const xInp = document.createElement("input");
       xInp.type = "range";
-      xInp.min = "-0.65";
-      xInp.max = "0.65";
+      const moveLimits = getLayerMoveLimits(layer);
+      xInp.min = String(moveLimits.minX);
+      xInp.max = String(moveLimits.maxX);
       xInp.step = "0.01";
       xInp.value = layer.x ?? 0;
-      xInp.oninput = () => { layer.x = +xInp.value; render(); };
+      xInp.oninput = () => { layer.x = +xInp.value; clampLayerPosition(layer); render(); };
       xWrap.appendChild(xInp);
 
       const yWrap = document.createElement("div");
       yWrap.innerHTML = `<label>Смещение Y</label>`;
       const yInp = document.createElement("input");
       yInp.type = "range";
-      yInp.min = "-0.65";
-      yInp.max = "0.65";
+      yInp.min = String(moveLimits.minY);
+      yInp.max = String(moveLimits.maxY);
       yInp.step = "0.01";
       yInp.value = layer.y ?? 0;
-      yInp.oninput = () => { layer.y = +yInp.value; render(); };
+      yInp.oninput = () => { layer.y = +yInp.value; clampLayerPosition(layer); render(); };
       yWrap.appendChild(yInp);
 
       body.appendChild(t);
@@ -2181,6 +2238,8 @@
       default:
         break;
     }
+
+    nodes.push(mkRange("Поворот (°)", "rot", -180, 180, 1));
 
     return nodes;
   }
@@ -2348,6 +2407,7 @@
       applyCenterPresetToLayer(layer, presetId);
     }
 
+    clampLayerPosition(layer);
     return layer;
   }
 
@@ -2690,6 +2750,7 @@
         applyCenterPresetToLayer(layer, selectedPresetId);
       }
 
+      clampLayerPosition(layer);
       state.layers.push(layer);
       overlay.remove();
       render();
