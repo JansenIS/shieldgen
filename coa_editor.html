@@ -1139,39 +1139,10 @@
     return shieldBox;
   }
 
-  function getLayerMoveLimits(layer) {
-    const fallback = { minX: -0.65, maxX: 0.65, minY: -0.65, maxY: 0.65 };
-    if (!layer || layer.fig?.kind !== "external_svg") return fallback;
-
-    const entry = externalSvgCache.get(getExternalFigureCacheKey(layer.fig));
-    const fitBox = pickExternalSvgBox(entry);
-    if (!fitBox || !(fitBox.width > 0 && fitBox.height > 0)) return fallback;
-
-    const shieldBox = getShieldBBox();
-    if (!(shieldBox.width > 0 && shieldBox.height > 0)) return fallback;
-
-    const s = clamp(layer.s ?? 0.52, 0.12, 1.5);
-    const containerW = VB_W * s;
-    const containerH = VB_H * s;
-    const figureAspect = fitBox.width / fitBox.height;
-    const containerAspect = containerW / containerH;
-
-    let visibleW = containerW;
-    let visibleH = containerH;
-    if (figureAspect >= containerAspect) visibleH = containerW / figureAspect;
-    else visibleW = containerH * figureAspect;
-
-    const halfDx = Math.max(0, (shieldBox.width - visibleW) / 2);
-    const halfDy = Math.max(0, (shieldBox.height - visibleH) / 2);
-    const centerOffsetX = (shieldBox.x + shieldBox.width / 2) - VB_W / 2;
-    const centerOffsetY = (shieldBox.y + shieldBox.height / 2) - VB_H / 2;
-
-    return {
-      minX: clamp((centerOffsetX - halfDx) / (VB_W / 2), -0.65, 0.65),
-      maxX: clamp((centerOffsetX + halfDx) / (VB_W / 2), -0.65, 0.65),
-      minY: clamp((centerOffsetY - halfDy) / (VB_H / 2), -0.65, 0.65),
-      maxY: clamp((centerOffsetY + halfDy) / (VB_H / 2), -0.65, 0.65)
-    };
+  function getLayerMoveLimits(_layer) {
+    // Разрешаем уводить фигуры за пределы щита: они остаются в сцене,
+    // но обрезаются clip-path маской щита.
+    return { minX: -2, maxX: 2, minY: -2, maxY: 2 };
   }
 
   function clampLayerPosition(layer) {
