@@ -631,6 +631,7 @@
     { id: "paly", name: "Полосы вертикальные" },
     { id: "barry", name: "Полосы горизонтальные" },
     { id: "lozengy", name: "Ромбами" },
+    { id: "lozengy_checky", name: "Ромбы шашечницей" },
     { id: "fence", name: "Ромбы симметричные" }
   ];
 
@@ -1357,6 +1358,33 @@
       p.appendChild(makeSVG("polygon", { points: ptsR, fill: colorA, opacity: "0.95" }));
       p.appendChild(makeSVG("polygon", { points: ptsT, fill: colorA, opacity: "0.95" }));
       p.appendChild(makeSVG("polygon", { points: ptsB, fill: colorA, opacity: "0.95" }));
+    } else if (type === "lozengy_checky") {
+      p.setAttribute("width", size);
+      p.setAttribute("height", size);
+
+      const step = size / 2;
+      const diamondW = step;
+      const diamondH = step;
+
+      const addDiamond = (cx, cy, fillColor) => {
+        const points = [
+          [cx, cy - diamondH / 2],
+          [cx + diamondW / 2, cy],
+          [cx, cy + diamondH / 2],
+          [cx - diamondW / 2, cy]
+        ].map((v) => v.join(",")).join(" ");
+        p.appendChild(makeSVG("polygon", { points, fill: fillColor, opacity: "0.96" }));
+      };
+
+      // Диагональная ромбовая сетка с шахматным чередованием цветов.
+      for (let gy = -1; gy <= 3; gy++) {
+        for (let gx = -1; gx <= 3; gx++) {
+          const cx = gx * step;
+          const cy = gy * step;
+          const fillColor = ((gx + gy) % 2 === 0) ? colorA : colorB;
+          addDiamond(cx, cy, fillColor);
+        }
+      }
     } else if (type === "fence") {
       p.setAttribute("width", size);
       p.setAttribute("height", size);
