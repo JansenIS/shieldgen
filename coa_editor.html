@@ -881,11 +881,12 @@
 
     styleNodes.forEach((styleNode) => {
       const css = styleNode.textContent || "";
-      const classRuleRe = /\.([_a-zA-Z][_a-zA-Z0-9-]*)\s*\{([^}]*)\}/g;
+      const classRuleRe = /([^{}]+)\{([^}]*)\}/g;
       let match;
       while ((match = classRuleRe.exec(css)) !== null) {
-        const className = match[1];
+        const selector = match[1].trim();
         const decl = match[2];
+        if (!selector || selector.startsWith("@")) continue;
         const props = new Map();
         decl.split(";").map((part) => part.trim()).filter(Boolean).forEach((part) => {
           const idx = part.indexOf(":");
@@ -896,7 +897,20 @@
             props.set(key, value);
           }
         });
-        if (props.size) cssPaintByClass.set(className, props);
+        if (!props.size) continue;
+
+        selector.split(",").map((entry) => entry.trim()).filter(Boolean).forEach((entry) => {
+          const classMatches = [...entry.matchAll(/\.([_a-zA-Z][_a-zA-Z0-9-]*)/g)];
+          classMatches.forEach((m) => {
+            const className = m[1];
+            if (!className) return;
+            if (!cssPaintByClass.has(className)) {
+              cssPaintByClass.set(className, new Map());
+            }
+            const stored = cssPaintByClass.get(className);
+            props.forEach((value, key) => stored.set(key, value));
+          });
+        });
       }
     });
 
