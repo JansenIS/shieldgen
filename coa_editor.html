@@ -1362,33 +1362,22 @@
       p.setAttribute("width", size);
       p.setAttribute("height", size);
 
-      // Вытянутые ромбы в шахматной раскладке:
-      // одинаковые цвета касаются углами, разные — сторонами.
-      const diamondW = size / 2;
-      const diamondH = (size * 2) / 3;
-      const stepX = diamondW;
-      const stepY = diamondH / 2;
+      // Классический шахматный паттерн ромбов:
+      // ромбы одного цвета касаются углами, разных — сторонами.
+      p.appendChild(makeSVG("rect", { x: 0, y: 0, width: size, height: size, fill: colorB }));
 
-      const addDiamond = (cx, cy, fillColor) => {
-        const points = [
-          [cx, cy - diamondH / 2],
-          [cx + diamondW / 2, cy],
-          [cx, cy + diamondH / 2],
-          [cx - diamondW / 2, cy]
-        ].map((v) => v.join(",")).join(" ");
-        p.appendChild(makeSVG("polygon", { points, fill: fillColor, opacity: "0.96" }));
-      };
+      // Вытянутый вертикальный ромб (как в примере пользователя).
+      const insetX = size * 0.22;
+      const points = [
+        [size / 2, 0],
+        [size - insetX, size / 2],
+        [size / 2, size],
+        [insetX, size / 2]
+      ].map((v) => v.join(",")).join(" ");
 
-      for (let gy = -2; gy <= 5; gy++) {
-        const y = gy * stepY;
-        const rowOffset = (gy % 2 === 0) ? 0 : stepX / 2;
-        for (let gx = -2; gx <= 5; gx++) {
-          const x = gx * stepX + rowOffset;
-          const fillColor = ((gx + gy) % 2 === 0) ? colorA : colorB;
-          addDiamond(x, y, fillColor);
-        }
-      }
+      p.appendChild(makeSVG("polygon", { points, fill: colorA }));
     } else if (type === "fence") {
+
       p.setAttribute("width", size);
       p.setAttribute("height", size);
 
