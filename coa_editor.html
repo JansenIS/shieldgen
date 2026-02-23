@@ -1362,19 +1362,14 @@
       p.setAttribute("width", size);
       p.setAttribute("height", size);
 
-      // Классический шахматный паттерн ромбов:
-      // ромбы одного цвета касаются углами, разных — сторонами.
+      // Ровно по референсу: фон + ромб, касающийся всех 4 границ тайла вершинами.
       p.appendChild(makeSVG("rect", { x: 0, y: 0, width: size, height: size, fill: colorB }));
-
-      // Вытянутый вертикальный ромб (как в примере пользователя).
-      const insetX = size * 0.22;
       const points = [
         [size / 2, 0],
-        [size - insetX, size / 2],
+        [size, size / 2],
         [size / 2, size],
-        [insetX, size / 2]
+        [0, size / 2]
       ].map((v) => v.join(",")).join(" ");
-
       p.appendChild(makeSVG("polygon", { points, fill: colorA }));
     } else if (type === "fence") {
 
