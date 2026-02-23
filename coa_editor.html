@@ -1209,6 +1209,89 @@
     while (segs.length > need) segs.pop();
 
     state.field.segments = segs;
+
+    state.layers.forEach((layer) => {
+      normalizeLayerSegmentMask(layer);
+    });
+  }
+
+  function getFieldSegmentRects(mode = state.field.mode) {
+    if (mode === "per_fess") {
+      return [
+        { x: 0, y: 0, width: VB_W, height: VB_H / 2 },
+        { x: 0, y: VB_H / 2, width: VB_W, height: VB_H / 2 }
+      ];
+    }
+    if (mode === "per_pale") {
+      return [
+        { x: 0, y: 0, width: VB_W / 2, height: VB_H },
+        { x: VB_W / 2, y: 0, width: VB_W / 2, height: VB_H }
+      ];
+    }
+    if (mode === "quarterly") {
+      return [
+        { x: 0, y: 0, width: VB_W / 2, height: VB_H / 2 },
+        { x: VB_W / 2, y: 0, width: VB_W / 2, height: VB_H / 2 },
+        { x: 0, y: VB_H / 2, width: VB_W / 2, height: VB_H / 2 },
+        { x: VB_W / 2, y: VB_H / 2, width: VB_W / 2, height: VB_H / 2 }
+      ];
+    }
+    if (mode === "pale_thirds") {
+      const w = VB_W / 3;
+      return [
+        { x: 0, y: 0, width: w, height: VB_H },
+        { x: w, y: 0, width: w, height: VB_H },
+        { x: 2 * w, y: 0, width: w, height: VB_H }
+      ];
+    }
+    return [{ x: 0, y: 0, width: VB_W, height: VB_H }];
+  }
+
+  function normalizeLayerSegmentMask(layer) {
+    const segmentCount = (fieldModes.find((x) => x.id === state.field.mode) || fieldModes[0]).segments;
+    if (!layer || segmentCount <= 1) {
+      if (layer) layer.segmentMask = null;
+      return;
+    }
+
+    const prev = Array.isArray(layer.segmentMask) ? layer.segmentMask : [];
+    const normalized = [];
+    for (let i = 0; i < segmentCount; i++) {
+      normalized.push(prev[i] !== false);
+    }
+    layer.segmentMask = normalized;
+  }
+
+
+  function layerUsesSegmentMask(layer) {
+    if (!layer || !Array.isArray(layer.segmentMask)) return false;
+    return layer.segmentMask.some(Boolean) && !layer.segmentMask.every(Boolean);
+  }
+
+  function appendLayerWithSegmentMask(parent, defs, layer) {
+    const baseLayer = figureToSVG(layer);
+    if (!layerUsesSegmentMask(layer)) {
+      parent.appendChild(baseLayer);
+      return;
+    }
+
+    const clipRects = getFieldSegmentRects();
+    const active = layer.segmentMask
+      .map((enabled, idx) => ({ enabled, rect: clipRects[idx] }))
+      .filter((item) => item.enabled && item.rect);
+
+    if (!active.length) return;
+
+    const segClipId = `layerSegClip_${uid().slice(0, 8)}`;
+    const segClip = makeSVG("clipPath", { id: segClipId });
+    active.forEach(({ rect }) => {
+      segClip.appendChild(makeSVG("rect", rect));
+    });
+    defs.appendChild(segClip);
+
+    const masked = makeSVG("g", { "clip-path": `url(#${segClipId})` });
+    masked.appendChild(baseLayer);
+    parent.appendChild(masked);
   }
 
   // ====== Patterns (defs) ======
@@ -1983,7 +2066,7 @@
 
     const figuresViewport = makeSVG("g", { "clip-path": `url(#${clipId})` });
     for (const layer of state.layers) {
-      figuresViewport.appendChild(figureToSVG(layer));
+      appendLayerWithSegmentMask(figuresViewport, defs, layer);
     }
     svg.appendChild(figuresViewport);
 
@@ -2076,6 +2159,7 @@
           fig: layer.fig,
           title: layer.title ? `${layer.title} (копия)` : ""
         };
+        normalizeLayerSegmentMask(cloned);
         clampLayerPosition(cloned);
         state.layers.splice(idx + 1, 0, cloned);
         render();
@@ -2150,6 +2234,55 @@
       body.appendChild(oWrap);
       body.appendChild(xWrap);
       body.appendChild(yWrap);
+
+      if ((fieldModes.find((x) => x.id === state.field.mode) || fieldModes[0]).segments > 1) {
+        normalizeLayerSegmentMask(layer);
+        const maskWrap = document.createElement("div");
+        maskWrap.className = "full";
+        maskWrap.innerHTML = `<label>Маска сокрытия по частям поля</label>`;
+
+        const list = document.createElement("div");
+        list.style.display = "grid";
+        list.style.gridTemplateColumns = "1fr 1fr";
+        list.style.gap = "6px 10px";
+
+        const mode = state.field.mode;
+        const labelsByMode = {
+          per_fess: ["Верхняя половина", "Нижняя половина"],
+          per_pale: ["Левая половина", "Правая половина"],
+          quarterly: ["Левая верхняя четверть", "Правая верхняя четверть", "Левая нижняя четверть", "Правая нижняя четверть"],
+          pale_thirds: ["Левая треть", "Средняя треть", "Правая треть"]
+        };
+        const labels = labelsByMode[mode] || layer.segmentMask.map((_, i) => `Сегмент ${i + 1}`);
+
+        layer.segmentMask.forEach((enabled, i) => {
+          const item = document.createElement("label");
+          item.style.display = "flex";
+          item.style.alignItems = "center";
+          item.style.gap = "6px";
+          item.style.margin = "0";
+          item.style.color = "var(--text)";
+          item.style.fontSize = "12px";
+
+          const cb = document.createElement("input");
+          cb.type = "checkbox";
+          cb.checked = !!enabled;
+          cb.onchange = () => {
+            layer.segmentMask[i] = cb.checked;
+            render();
+          };
+
+          const span = document.createElement("span");
+          span.textContent = labels[i] || `Сегмент ${i + 1}`;
+
+          item.appendChild(cb);
+          item.appendChild(span);
+          list.appendChild(item);
+        });
+
+        maskWrap.appendChild(list);
+        body.appendChild(maskWrap);
+      }
 
       if (canCenterPreset(layer.fig)) {
         const centerWrap = document.createElement("div");
@@ -2501,6 +2634,7 @@
       applyCenterPresetToLayer(layer, presetId);
     }
 
+    normalizeLayerSegmentMask(layer);
     clampLayerPosition(layer);
     return layer;
   }
@@ -2844,6 +2978,7 @@
         applyCenterPresetToLayer(layer, selectedPresetId);
       }
 
+      normalizeLayerSegmentMask(layer);
       clampLayerPosition(layer);
       state.layers.push(layer);
       overlay.remove();
