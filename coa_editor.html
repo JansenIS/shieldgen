@@ -631,7 +631,7 @@
     { id: "paly", name: "Полосы вертикальные" },
     { id: "barry", name: "Полосы горизонтальные" },
     { id: "lozengy", name: "Ромбами" },
-    { id: "fence", name: "Частокол" }
+    { id: "fence", name: "Ромбы симметричные" }
   ];
 
   const fieldModes = [
@@ -1360,25 +1360,28 @@
     } else if (type === "fence") {
       p.setAttribute("width", size);
       p.setAttribute("height", size);
-      const gap = Math.max(2, Math.floor(size * 0.08));
-      const plankW = Math.max(6, Math.floor((size - gap*2) / 4));
-      const step = plankW + gap;
-      for (let i=0; i<6; i++){
-        const x = i*step;
-        if (x > size) break;
-        p.appendChild(makeSVG("rect", { x, y: size*0.18, width: plankW, height: size*0.82, fill: colorA, opacity:"0.95" }));
-        const tri = makeSVG("polygon", {
-          points: [
-            [x, size*0.18].join(","),
-            [x + plankW/2, 0].join(","),
-            [x + plankW, size*0.18].join(",")
-          ].join(" "),
-          fill: colorA,
-          opacity:"0.95"
-        });
-        p.appendChild(tri);
-      }
-      p.appendChild(makeSVG("rect", { x:0, y:size*0.55, width:size, height: Math.max(4, size*0.10), fill: colorB, opacity:"0.25" }));
+
+      const diamondW = size * 0.50;
+      const diamondH = size * 0.50;
+
+      const addDiamond = (cx, cy) => {
+        const points = [
+          [cx, cy - diamondH / 2],
+          [cx + diamondW / 2, cy],
+          [cx, cy + diamondH / 2],
+          [cx - diamondW / 2, cy]
+        ].map((v) => v.join(",")).join(" ");
+        p.appendChild(makeSVG("polygon", { points, fill: colorA, opacity: "0.95" }));
+      };
+
+      // Шахматное смещение рядов ромбов (как на баварском паттерне).
+      addDiamond(size / 2, size * 0.25);
+      addDiamond(0, size * 0.75);
+      addDiamond(size, size * 0.75);
+
+      // Граничные ромбы для бесшовного повторения.
+      addDiamond(size / 2, -size * 0.25);
+      addDiamond(size / 2, size * 1.25);
     }
 
     defs.appendChild(p);
