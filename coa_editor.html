@@ -803,7 +803,25 @@
     state.layers.forEach((layer) => {
       const color = normalizePaletteColor(layer.color);
       if (!allowed.has(color)) layer.color = fallback;
+      if (layer.patternColorB) {
+        const colorB = normalizePaletteColor(layer.patternColorB);
+        if (!allowed.has(colorB)) layer.patternColorB = fallback;
+      }
     });
+  }
+
+  function canUsePatternFill(layer) {
+    if (!layer?.fig) return false;
+    const cls = getFigureClass(layer.fig);
+    return cls === "honorable" || cls === "simple";
+  }
+
+  function getLayerPatternConfig(layer) {
+    const baseColor = normalizePaletteColor(layer?.color || "#FF7F00");
+    const type = canUsePatternFill(layer) ? (layer.pattern || "solid") : "solid";
+    const colorB = normalizePaletteColor(layer?.patternColorB || "#FFFFFF");
+    const size = clamp(+(layer?.patternSize ?? state.field.patternSize ?? 64), 12, 140);
+    return { type, colorA: baseColor, colorB, size };
   }
 
   function validateLayersForRule(rule) {
@@ -1270,7 +1288,7 @@
   }
 
   function appendLayerWithSegmentMask(parent, defs, layer) {
-    const baseLayer = figureToSVG(layer);
+    const baseLayer = figureToSVG(layer, defs);
     if (!layerUsesSegmentMask(layer)) {
       parent.appendChild(baseLayer);
       return;
@@ -1598,7 +1616,7 @@
   }
 
   // ====== Figure rendering ======
-  function figureToSVG(layer, clipId = null) {
+  function figureToSVG(layer, defs, clipId = null) {
     const { fig } = layer;
     const attrs = {
       id: `layer_${layer.id}`,
@@ -1609,11 +1627,19 @@
 
     g.setAttribute("transform", getLayerTransform(layer));
 
-    const fill = layer.color || "#FF7F00";
+    const { type: patternType, colorA, colorB, size: patternSize } = getLayerPatternConfig(layer);
+    const fill = colorA;
+    const patternId = patternType !== "solid"
+      ? `layerPattern_${layer.id.replace(/[^a-z0-9_-]/gi, "_")}`
+      : null;
+    if (patternId && defs) {
+      buildPatternDef(defs, patternId, patternType, patternSize, colorA, colorB);
+    }
+    const fillPaint = patternId ? `url(#${patternId})` : fill;
     const opacity = clamp(layer.opacity ?? 1, 0, 1);
 
     function add(node){
-      node.setAttribute("fill", fill);
+      node.setAttribute("fill", fillPaint);
       node.setAttribute("fill-opacity", opacity);
       g.appendChild(node);
     }
@@ -1737,7 +1763,7 @@
       const p = makeSVG("path", {
         d: getShieldPathD(),
         fill: "none",
-        stroke: fill,
+        stroke: fillPaint,
         "stroke-opacity": opacity,
         "stroke-width": strokeW,
         "stroke-linejoin": "round",
@@ -1857,7 +1883,7 @@
       const p = makeSVG("path", {
         d: getShieldPathD(),
         fill: "none",
-        stroke: fill,
+        stroke: fillPaint,
         "stroke-opacity": opacity,
         "stroke-width": strokeW,
         "stroke-linejoin": "round",
@@ -1881,7 +1907,7 @@
       const p1 = makeSVG("path", {
         d: getShieldPathD(),
         fill: "none",
-        stroke: fill,
+        stroke: fillPaint,
         "stroke-opacity": opacity,
         "stroke-width": strokeW,
         "stroke-linejoin": "round",
@@ -2249,6 +2275,53 @@
 
       body.appendChild(t);
       body.appendChild(cWrap);
+
+      if (canUsePatternFill(layer)) {
+        const patternWrap = document.createElement("div");
+        patternWrap.className = "full";
+        patternWrap.innerHTML = `<label>Паттерн фигуры</label>`;
+        const patternSel = document.createElement("select");
+        patternTypes.forEach((p) => {
+          const o = document.createElement("option");
+          o.value = p.id;
+          o.textContent = p.name;
+          patternSel.appendChild(o);
+        });
+        patternSel.value = layer.pattern || "solid";
+        patternSel.onchange = () => {
+          layer.pattern = patternSel.value;
+          render();
+        };
+        patternWrap.appendChild(patternSel);
+        body.appendChild(patternWrap);
+
+        const patternColorWrap = document.createElement("div");
+        patternColorWrap.className = "full";
+        patternColorWrap.innerHTML = `<label>Второй цвет паттерна</label>`;
+        const patternColorSel = createPalettePicker(layer.patternColorB || "#FFFFFF", (value) => {
+          layer.patternColorB = value;
+          render();
+        }, { allowedColors: getRestrictionSet() });
+        patternColorWrap.appendChild(patternColorSel);
+        body.appendChild(patternColorWrap);
+
+        const patternSizeWrap = document.createElement("div");
+        patternSizeWrap.className = "full";
+        patternSizeWrap.innerHTML = `<label>Размер паттерна фигуры</label>`;
+        const patternSizeInpLayer = document.createElement("input");
+        patternSizeInpLayer.type = "range";
+        patternSizeInpLayer.min = "12";
+        patternSizeInpLayer.max = "140";
+        patternSizeInpLayer.step = "1";
+        patternSizeInpLayer.value = String(clamp(+(layer.patternSize ?? state.field.patternSize ?? 64), 12, 140));
+        patternSizeInpLayer.oninput = () => {
+          layer.patternSize = +patternSizeInpLayer.value;
+          render();
+        };
+        patternSizeWrap.appendChild(patternSizeInpLayer);
+        body.appendChild(patternSizeWrap);
+      }
+
       body.appendChild(oWrap);
       body.appendChild(xWrap);
       body.appendChild(yWrap);
@@ -2858,7 +2931,7 @@
           return;
         }
       } else {
-        svg.appendChild(figureToSVG(layer, clipId));
+        svg.appendChild(figureToSVG(layer, defs, clipId));
       }
 
       icon.appendChild(svg);
