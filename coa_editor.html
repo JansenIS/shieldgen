@@ -468,6 +468,12 @@
   // ====== SVG constants ======
   const VB_W = 1000;
   const VB_H = 1200;
+  const APP_BASE_PATH = new URL(".", window.location.href).pathname.replace(/\/$/, "");
+
+  function withAppBase(path) {
+    const clean = String(path || "").trim().replace(/^\/+/, "");
+    return `${APP_BASE_PATH}/${clean}`;
+  }
 
   // ====== Catalog data ======
   async function loadJSON(path) {
@@ -483,14 +489,19 @@
   }
 
   const [shieldShapes, figureCatalog, heraldicFigureCatalog] = await Promise.all([
-    loadJSON("./shield_shapes.json"),
-    loadJSON("./figures.json"),
-    loadJSON("./heraldic_figures.json")
+    loadJSON(withAppBase("shield_shapes.json")),
+    loadJSON(withAppBase("figures.json")),
+    loadJSON(withAppBase("heraldic_figures.json"))
   ]);
 
   async function discoverFigureFilesFromDirectory() {
     const cacheBust = Date.now();
-    const candidates = ["./figures/", "./figures", "./figures/index.html", "./figures/index.json"];
+    const candidates = [
+      withAppBase("figures/"),
+      withAppBase("figures"),
+      withAppBase("figures/index.html"),
+      withAppBase("figures/index.json")
+    ];
 
     const normalizeFigurePath = (href) => {
       if (!href) return null;
@@ -509,7 +520,7 @@
         filename = filePart;
       }
       filename = filename.replace(/&#39;/g, "'").replace(/&apos;/g, "'");
-      return `./figures/${filename}`;
+      return withAppBase(`figures/${filename}`);
     };
 
     const extractSvgPathsFromText = (text) => {
@@ -595,7 +606,10 @@
 
   const normalizePath = (path) => {
     const normalized = String(path || "").trim().toLowerCase();
-    return normalized.startsWith("./") ? normalized : `./${normalized.replace(/^\/+/, "")}`;
+    if (normalized.startsWith("http://") || normalized.startsWith("https://")) {
+      return normalized;
+    }
+    return withAppBase(normalized.replace(/^\.\//, ""));
   };
 
   const uploadedFigureCatalog = [];
