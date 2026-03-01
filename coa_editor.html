@@ -477,9 +477,39 @@
   }
 
   async function loadSVG(path) {
+    if (typeof path === "string" && path.startsWith("data:image/svg+xml")) {
+      const commaIdx = path.indexOf(",");
+      if (commaIdx >= 0) {
+        const meta = path.slice(0, commaIdx);
+        const payload = path.slice(commaIdx + 1);
+        return meta.includes(";base64") ? atob(payload) : decodeURIComponent(payload);
+      }
+    }
     const res = await fetch(path);
     if (!res.ok) throw new Error(`Не удалось загрузить ${path}: ${res.status}`);
     return res.text();
+  }
+
+  function loadAdminCatalog() {
+    try {
+      const raw = localStorage.getItem("shieldgenAdminFigures");
+      if (!raw) return [];
+      const parsed = JSON.parse(raw);
+      if (!Array.isArray(parsed)) return [];
+      return parsed
+        .filter((item) => item && item.kind === "external_svg" && item.src)
+        .map((item, idx) => ({
+          group: item.group || "Гербовые",
+          id: item.id || `admin_${idx}`,
+          name: item.name || `SVG фигура ${idx + 1}`,
+          kind: "external_svg",
+          src: item.src,
+          defaults: item.defaults || { s: 0.52, x: 0, y: 0 }
+        }));
+    } catch (err) {
+      console.warn("Не удалось загрузить фигуры из админки", err);
+      return [];
+    }
   }
 
   const [shieldShapes, figureCatalog, heraldicFigureCatalog] = await Promise.all([
@@ -599,6 +629,7 @@
   };
 
   const uploadedFigureCatalog = [];
+  const adminFigureCatalog = loadAdminCatalog();
   const discoveredFigurePaths = await discoverFigureFilesFromDirectory();
   const knownFigurePaths = new Set(
     [...figureCatalog, ...heraldicFigureCatalog]
@@ -617,13 +648,32 @@
       defaults: { s: 0.52, x: 0, y: 0 }
     }));
 
-  const heraldicPalette = [
+  const BASE_HERALDIC_PALETTE = [
     "#FFBB06", "#FFF500", "#F4C551", "#FFFFFF", "#B4BEBF",
-    "#35373b", "#5E3306", "#C07F55", "#6E2202", "#FE0000",
+    "#35373B", "#5E3306", "#C07F55", "#6E2202", "#FE0000",
     "#FF93B5", "#860000", "#00B357", "#02CC00", "#015601",
     "#0000FE", "#5DC6F3", "#06186E", "#890098", "#C18CFE",
     "#BF285B", "#FF7F00", "#FFA163", "#FF633D", "#000000"
   ];
+
+  function loadAdminAllowedColors() {
+    try {
+      const raw = localStorage.getItem("shieldgenAdminAllowedColors");
+      if (!raw) return [];
+      const parsed = JSON.parse(raw);
+      if (!Array.isArray(parsed)) return [];
+      const normalized = parsed
+        .map((c) => String(c || "").trim().toUpperCase())
+        .filter((c) => /^#[0-9A-F]{6}$/.test(c));
+      const uniq = [...new Set(normalized)];
+      return uniq.filter((c) => BASE_HERALDIC_PALETTE.includes(c));
+    } catch (_) {
+      return [];
+    }
+  }
+
+  const adminAllowedColors = loadAdminAllowedColors();
+  const heraldicPalette = adminAllowedColors.length ? adminAllowedColors : BASE_HERALDIC_PALETTE;
 
   const patternTypes = [
     { id: "solid", name: "Сплошной" },
@@ -669,7 +719,7 @@
   const downloadPNGBtn = el("downloadPNG");
 
   function getFullFigureCatalog() {
-    return [...figureCatalog, ...heraldicFigureCatalog, ...autoDetectedFigures, ...uploadedFigureCatalog];
+    return [...figureCatalog, ...heraldicFigureCatalog, ...autoDetectedFigures, ...adminFigureCatalog, ...uploadedFigureCatalog];
   }
 
   const rankRules = [
