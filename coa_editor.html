@@ -363,7 +363,6 @@
   <div class="row">
     <h1>Генератор гербов (SVG)</h1>
     <div class="hint">10 принципиально разных форм щита · перетаскивание фигур · деление поля/паттерны · экспорт SVG/PNG</div>
-    <a href="./coa_admin.html" style="margin-left:auto;color:#7dd3fc;font-size:12px;text-decoration:none;border:1px solid #2a3144;padding:6px 10px;border-radius:10px;">Админка фигур</a>
   </div>
 </header>
 
@@ -649,13 +648,32 @@
       defaults: { s: 0.52, x: 0, y: 0 }
     }));
 
-  const heraldicPalette = [
+  const BASE_HERALDIC_PALETTE = [
     "#FFBB06", "#FFF500", "#F4C551", "#FFFFFF", "#B4BEBF",
-    "#35373b", "#5E3306", "#C07F55", "#6E2202", "#FE0000",
+    "#35373B", "#5E3306", "#C07F55", "#6E2202", "#FE0000",
     "#FF93B5", "#860000", "#00B357", "#02CC00", "#015601",
     "#0000FE", "#5DC6F3", "#06186E", "#890098", "#C18CFE",
     "#BF285B", "#FF7F00", "#FFA163", "#FF633D", "#000000"
   ];
+
+  function loadAdminAllowedColors() {
+    try {
+      const raw = localStorage.getItem("shieldgenAdminAllowedColors");
+      if (!raw) return [];
+      const parsed = JSON.parse(raw);
+      if (!Array.isArray(parsed)) return [];
+      const normalized = parsed
+        .map((c) => String(c || "").trim().toUpperCase())
+        .filter((c) => /^#[0-9A-F]{6}$/.test(c));
+      const uniq = [...new Set(normalized)];
+      return uniq.filter((c) => BASE_HERALDIC_PALETTE.includes(c));
+    } catch (_) {
+      return [];
+    }
+  }
+
+  const adminAllowedColors = loadAdminAllowedColors();
+  const heraldicPalette = adminAllowedColors.length ? adminAllowedColors : BASE_HERALDIC_PALETTE;
 
   const patternTypes = [
     { id: "solid", name: "Сплошной" },

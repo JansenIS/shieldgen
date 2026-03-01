@@ -10,8 +10,8 @@
     body{margin:0;background:linear-gradient(180deg,#0b0d12,#0f1115);color:var(--text);font-family:ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif}
     header{padding:14px 16px;border-bottom:1px solid var(--line);display:flex;gap:10px;align-items:center;flex-wrap:wrap}
     a{color:var(--accent);text-decoration:none}
-    .layout{max-width:1200px;margin:0 auto;padding:12px;display:grid;grid-template-columns:360px 1fr;gap:12px}
-    @media (max-width:960px){.layout{grid-template-columns:1fr}}
+    .layout{max-width:1260px;margin:0 auto;padding:12px;display:grid;grid-template-columns:360px 1fr 320px;gap:12px}
+    @media (max-width:1120px){.layout{grid-template-columns:1fr}}
     .panel{background:var(--panel);border:1px solid var(--line);border-radius:14px;overflow:hidden}
     .panel h2{margin:0;padding:12px;border-bottom:1px solid var(--line);font-size:14px}
     .content{padding:12px}
@@ -29,12 +29,19 @@
     .preview img{width:100%;height:100%;object-fit:contain;filter:brightness(0) saturate(100%) invert(87%) sepia(9%) saturate(268%) hue-rotate(186deg) brightness(99%) contrast(92%)}
     .meta{font-size:12px;color:var(--muted)}
     .hint{font-size:12px;color:var(--muted);line-height:1.4}
+    .paletteGrid{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:6px;margin-top:8px}
+    .swatch{height:32px;border-radius:8px;border:1px solid var(--line);cursor:pointer;position:relative;padding:0}
+    .swatch.active{outline:2px solid #7dd3fc;outline-offset:1px;border-color:#7dd3fc}
+    .swatch::after{content:'✓';position:absolute;right:6px;top:4px;font-size:12px;font-weight:700;color:#0b0d12;opacity:0;}
+    .swatch.active::after{opacity:1}
+    .colorList{margin-top:10px;font-size:12px;color:var(--muted)}
+    code{color:#cfe8ff}
   </style>
 </head>
 <body>
   <header>
     <strong>Админка SVG фигур</strong>
-    <span class="hint">Управление пользовательскими фигурами для генератора щитов</span>
+    <span class="hint">Управление пользовательскими фигурами и допустимыми цветами для генератора щитов</span>
     <a href="./coa_editor.html" style="margin-left:auto">← Вернуться в генератор</a>
   </header>
 
@@ -73,25 +80,71 @@
         <div id="list" class="list"></div>
       </div>
     </section>
+
+    <section class="panel">
+      <h2>Допустимые цвета</h2>
+      <div class="content">
+        <div class="hint">Выберите цвета, которые будут доступны в генераторе. Сохраняются в <code>localStorage/shieldgenAdminAllowedColors</code>.</div>
+        <div id="paletteGrid" class="paletteGrid"></div>
+        <div class="btnrow" style="margin-top:10px">
+          <button id="saveColors" class="primary">Сохранить цвета</button>
+          <button id="resetColors">Сбросить к умолчанию</button>
+        </div>
+        <div id="selectedColors" class="colorList"></div>
+      </div>
+    </section>
   </div>
 
 <script>
 (() => {
   const STORAGE_KEY = 'shieldgenAdminFigures';
+  const COLOR_KEY = 'shieldgenAdminAllowedColors';
+  const BASE_PALETTE = [
+    '#FFBB06', '#FFF500', '#F4C551', '#FFFFFF', '#B4BEBF',
+    '#35373B', '#5E3306', '#C07F55', '#6E2202', '#FE0000',
+    '#FF93B5', '#860000', '#00B357', '#02CC00', '#015601',
+    '#0000FE', '#5DC6F3', '#06186E', '#890098', '#C18CFE',
+    '#BF285B', '#FF7F00', '#FFA163', '#FF633D', '#000000'
+  ];
+
   const q = (id) => document.getElementById(id);
   const els = {
     name:q('name'), id:q('id'), group:q('group'), scale:q('scale'), svgText:q('svgText'),
     save:q('save'), clearForm:q('clearForm'), pickFile:q('pickFile'), fileInput:q('fileInput'),
-    list:q('list'), exportJson:q('exportJson'), clearAll:q('clearAll')
+    list:q('list'), exportJson:q('exportJson'), clearAll:q('clearAll'),
+    paletteGrid:q('paletteGrid'), saveColors:q('saveColors'), resetColors:q('resetColors'), selectedColors:q('selectedColors')
   };
 
   let editingId = null;
+  let selectedColors = new Set(loadAllowedColors());
 
   const read = () => {
     try { return JSON.parse(localStorage.getItem(STORAGE_KEY) || '[]'); }
     catch (_) { return []; }
   };
   const write = (arr) => localStorage.setItem(STORAGE_KEY, JSON.stringify(arr));
+
+  function loadAllowedColors() {
+    try {
+      const parsed = JSON.parse(localStorage.getItem(COLOR_KEY) || '[]');
+      if (!Array.isArray(parsed)) return BASE_PALETTE.slice();
+      const normalized = parsed
+        .map((c) => String(c || '').trim().toUpperCase())
+        .filter((c) => /^#[0-9A-F]{6}$/.test(c) && BASE_PALETTE.includes(c));
+      const uniq = [...new Set(normalized)];
+      return uniq.length ? uniq : BASE_PALETTE.slice();
+    } catch (_) {
+      return BASE_PALETTE.slice();
+    }
+  }
+
+  function saveAllowedColors(colors) {
+    const list = [...new Set(colors
+      .map((c) => String(c || '').trim().toUpperCase())
+      .filter((c) => /^#[0-9A-F]{6}$/.test(c) && BASE_PALETTE.includes(c))
+    )];
+    localStorage.setItem(COLOR_KEY, JSON.stringify(list.length ? list : BASE_PALETTE));
+  }
 
   function toDataUri(svg) {
     return 'data:image/svg+xml,' + encodeURIComponent(svg);
@@ -108,6 +161,33 @@
     els.group.value = 'Гербовые';
     els.scale.value = '0.52';
     els.svgText.value = '';
+  }
+
+  function renderColorSummary() {
+    const items = [...selectedColors];
+    els.selectedColors.textContent = `Выбрано цветов: ${items.length}. ${items.join(', ')}`;
+  }
+
+  function renderColors() {
+    els.paletteGrid.innerHTML = '';
+    BASE_PALETTE.forEach((color) => {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'swatch' + (selectedColors.has(color) ? ' active' : '');
+      b.style.background = color;
+      b.title = color;
+      b.onclick = () => {
+        if (selectedColors.has(color)) {
+          if (selectedColors.size === 1) return;
+          selectedColors.delete(color);
+        } else {
+          selectedColors.add(color);
+        }
+        renderColors();
+      };
+      els.paletteGrid.appendChild(b);
+    });
+    renderColorSummary();
   }
 
   function render() {
@@ -229,7 +309,19 @@
     clearForm();
   };
 
+  els.saveColors.onclick = () => {
+    saveAllowedColors([...selectedColors]);
+    alert('Допустимые цвета сохранены. Обновите страницу генератора.');
+  };
+
+  els.resetColors.onclick = () => {
+    selectedColors = new Set(BASE_PALETTE);
+    renderColors();
+    saveAllowedColors(BASE_PALETTE);
+  };
+
   render();
+  renderColors();
 })();
 </script>
 </body>
